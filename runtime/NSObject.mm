@@ -1740,7 +1740,9 @@ objc_object::sidetable_isWeaklyReferenced()
 //Clients can dlsym() for this symbol to see if an ObjC supporting
 //-_setWeaklyReferenced is present
 OBJC_EXPORT const uintptr_t _objc_has_weak_formation_callout = 0;
+#if !(defined(DARLING) && defined(__arm64__))
 static_assert(SUPPORT_NONPOINTER_ISA, "Weak formation callout must only be defined when nonpointer isa is supported.");
+#endif
 #else
 static_assert(!SUPPORT_NONPOINTER_ISA, "If weak callout is not present then we must not support nonpointer isas.");
 #endif
@@ -2641,5 +2643,3 @@ NONLAZY_CLASS_LOAD
 }
 
 @end
-
-

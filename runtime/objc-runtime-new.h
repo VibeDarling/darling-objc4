@@ -123,7 +123,11 @@
 //   _tryRetain/_isDeallocating/retainWeakReference/allowsWeakReference
 #define FAST_HAS_DEFAULT_RR     (1UL<<2)
 // data pointer
+#if defined(DARLING) && defined(__arm64__)
+#define FAST_DATA_MASK          (~(uintptr_t)7)
+#else
 #define FAST_DATA_MASK          0x00007ffffffffff8UL
+#endif
 
 #if __arm64__
 // class or superclass has .cxx_construct/.cxx_destruct implementation
