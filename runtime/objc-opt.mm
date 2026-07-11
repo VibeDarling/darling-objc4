@@ -97,6 +97,12 @@ header_info_rw *getPreoptimizedHeaderRW(const struct header_info *const hdr)
 
 void preopt_init(void)
 {
+    size_t length;
+    const uintptr_t start = (uintptr_t)_dyld_get_shared_cache_range(&length);
+    if (start) {
+        objc::dataSegmentsRanges.setSharedCacheRange(start, start + length);
+    }
+
     disableSharedCacheOptimizations();
     
     if (PrintPreopt) {

@@ -3595,6 +3595,27 @@ void _read_images(header_info **hList, uint32_t hCount, int totalClasses, int un
     static size_t UnfixedSelectors;
     {
         mutex_locker_t lock(selLock);
+#if defined(DARLING)
+        size_t cachedSelectorSections = 0;
+        for (EACH_HEADER) {
+            SEL *sels = _getObjc2SelectorRefs(hi, &count);
+            if (!objc::inSharedCache((uintptr_t)sels)) continue;
+            cachedSelectorSections++;
+            for (i = 0; i < count; i++) {
+                sel_registerNameFromSharedCacheNoLock(sel_cname(sels[i]));
+            }
+        }
+        if (cachedSelectorSections != 0) {
+            for (header_info *loaded = FirstHeader; loaded != nil; loaded = loaded->getNext()) {
+                SEL *sels = _getObjc2SelectorRefs(loaded, &count);
+                if (objc::inSharedCache((uintptr_t)sels)) continue;
+                for (i = 0; i < count; i++) {
+                    SEL sel = sel_registerNameNoLock(sel_cname(sels[i]), loaded->isBundle());
+                    if (sels[i] != sel) sels[i] = sel;
+                }
+            }
+        }
+#endif
         for (EACH_HEADER) {
             if (hi->hasPreoptimizedSelectors()) continue;
 
