@@ -1601,75 +1601,107 @@ static void methodizeClass(Class cls, Class previously)
 }
 
 #if defined(DARLING)
-void refreshRelativeMetadataLists()
+static const class_ro_t *relativeMetadataSourceForClass(Class cls)
 {
-    runtimeLock.assertLocked();
+    const class_ro_t *ro = cls->data()->ro();
+    if (objc::inSharedCache((uintptr_t)ro)) return ro;
 
-    foreach_realized_class_and_metaclass(^(Class cls) {
-        auto rw = cls->data();
-        auto ro = rw->ro();
-        if (!objc::inSharedCache((uintptr_t)ro) ||
-            !ro->hasRelativeMetadataLists()) {
-            return true;
-        }
+    __block const class_ro_t *result = nullptr;
+    _dyld_for_each_objc_class(cls->nameForLogging(),
+        ^(void *classPtr, bool, bool *stop) {
+            Class candidate = (Class)classPtr;
+            if (cls->isMetaClass()) candidate = candidate->ISA();
+            if (!candidate) return;
+            const class_ro_t *candidateRO = candidate->data()->ro();
+            if (objc::inSharedCache((uintptr_t)candidateRO) &&
+                candidateRO->hasRelativeMetadataLists()) {
+                result = candidateRO;
+                *stop = true;
+            }
+        });
+    return result;
+}
 
-        auto rwe = rw->extAllocIfNeeded();
+static bool refreshRelativeMetadataListsForClass(Class cls)
+{
+    auto rw = cls->data();
+    auto sourceRO = relativeMetadataSourceForClass(cls);
+    if (!sourceRO || !sourceRO->hasRelativeMetadataLists()) return false;
 
-        uint32_t methodCount = ro->baseMethodListCount();
-        if (methodCount) {
+    bool changed = false;
+    auto rwe = rw->extAllocIfNeeded();
+
+    uint32_t methodCount = sourceRO->baseMethodListCount();
+    if (methodCount) {
             method_list_t **loaded = (method_list_t **)
                 malloc(sizeof(*loaded) * methodCount);
             method_list_t **missing = (method_list_t **)
                 malloc(sizeof(*missing) * methodCount);
-            ro->copyBaseMethodLists(loaded);
+            sourceRO->copyBaseMethodLists(loaded);
             uint32_t missingCount = 0;
             for (uint32_t i = 0; i != methodCount; ++i) {
                 if (!rwe->methods.containsList(loaded[i]))
                     missing[missingCount++] = loaded[i];
             }
             if (missingCount) {
-                prepareMethodLists(cls, missing, missingCount, YES,
+                prepareMethodLists(cls, missing, missingCount, NO,
                                    isBundleClass(cls), nullptr);
                 rwe->methods.attachLists(missing, missingCount);
+                changed = true;
             }
             free(missing);
             free(loaded);
-        }
+    }
 
-        uint32_t propertyCount = ro->basePropertyListCount();
-        if (propertyCount) {
+    uint32_t propertyCount = sourceRO->basePropertyListCount();
+    if (propertyCount) {
             property_list_t **loaded = (property_list_t **)
                 malloc(sizeof(*loaded) * propertyCount);
             property_list_t **missing = (property_list_t **)
                 malloc(sizeof(*missing) * propertyCount);
-            ro->copyBasePropertyLists(loaded);
+            sourceRO->copyBasePropertyLists(loaded);
             uint32_t missingCount = 0;
             for (uint32_t i = 0; i != propertyCount; ++i) {
                 if (!rwe->properties.containsList(loaded[i]))
                     missing[missingCount++] = loaded[i];
             }
-            rwe->properties.attachLists(missing, missingCount);
+            if (missingCount) {
+                rwe->properties.attachLists(missing, missingCount);
+                changed = true;
+            }
             free(missing);
             free(loaded);
-        }
+    }
 
-        uint32_t protocolCount = ro->baseProtocolListCount();
-        if (protocolCount) {
+    uint32_t protocolCount = sourceRO->baseProtocolListCount();
+    if (protocolCount) {
             protocol_list_t **loaded = (protocol_list_t **)
                 malloc(sizeof(*loaded) * protocolCount);
             protocol_list_t **missing = (protocol_list_t **)
                 malloc(sizeof(*missing) * protocolCount);
-            ro->copyBaseProtocolLists(loaded);
+            sourceRO->copyBaseProtocolLists(loaded);
             uint32_t missingCount = 0;
             for (uint32_t i = 0; i != protocolCount; ++i) {
                 if (!rwe->protocols.containsList(loaded[i]))
                     missing[missingCount++] = loaded[i];
             }
-            rwe->protocols.attachLists(missing, missingCount);
+            if (missingCount) {
+                rwe->protocols.attachLists(missing, missingCount);
+                changed = true;
+            }
             free(missing);
             free(loaded);
-        }
+    }
 
+    return changed;
+}
+
+void refreshRelativeMetadataLists()
+{
+    runtimeLock.assertLocked();
+
+    foreach_realized_class_and_metaclass(^(Class cls) {
+        refreshRelativeMetadataListsForClass(cls);
         return true;
     });
 }
@@ -3354,6 +3386,13 @@ load_images(const char *path __unused, const struct mach_header *mh)
         didInitialAttachCategories = true;
         loadAllCategories();
     }
+
+#if defined(DARLING)
+    {
+        mutex_locker_t lock(runtimeLock);
+        refreshRelativeMetadataLists();
+    }
+#endif
 
     // Return without taking locks if there are no +load methods here.
     if (!hasLoadMethods((const headerType *)mh)) return;
