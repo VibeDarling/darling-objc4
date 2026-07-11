@@ -33,22 +33,7 @@
 #if defined(DARLING)
 bool relativeMetadataImageIsLoaded(uint16_t imageIndex)
 {
-    struct headeropt_rw_t {
-        uint32_t count;
-        uint32_t entsize;
-        header_info_rw headers[0];
-    };
-
-    const headeropt_rw_t *table =
-        (const headeropt_rw_t *)_dyld_for_objc_header_opt_rw();
-    if (!table || imageIndex >= table->count ||
-        table->entsize < sizeof(header_info_rw)) {
-        return false;
-    }
-
-    const header_info_rw *entry = (const header_info_rw *)
-        ((const uint8_t *)table->headers + imageIndex * table->entsize);
-    return entry->getLoaded();
+    return _dyld_is_preoptimized_objc_image_loaded(imageIndex);
 }
 #endif
 
@@ -415,6 +400,13 @@ unsigned int getPreoptimizedClassUnreasonableCount()
 
 Class getPreoptimizedClass(const char *name)
 {
+#if defined(DARLING)
+    static bool refreshedRelativeMetadata = false;
+    if (!refreshedRelativeMetadata && _dyld_objc_class_count() != 0) {
+        refreshedRelativeMetadata = true;
+        refreshRelativeMetadataLists();
+    }
+#endif
     objc_clsopt_t *classes = opt ? opt->clsopt() : nil;
     if (!classes) return nil;
 

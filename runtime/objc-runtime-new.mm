@@ -1612,7 +1612,7 @@ static const class_ro_t *relativeMetadataSourceForClass(Class cls)
             Class candidate = (Class)classPtr;
             if (cls->isMetaClass()) candidate = candidate->ISA();
             if (!candidate) return;
-            const class_ro_t *candidateRO = candidate->data()->ro();
+            const class_ro_t *candidateRO = candidate->bits.safe_ro();
             if (objc::inSharedCache((uintptr_t)candidateRO) &&
                 candidateRO->hasRelativeMetadataLists()) {
                 result = candidateRO;
@@ -1704,6 +1704,12 @@ void refreshRelativeMetadataLists()
         refreshRelativeMetadataListsForClass(cls);
         return true;
     });
+}
+
+void refreshRelativeMetadataListsFromFallback()
+{
+    mutex_locker_t lock(runtimeLock);
+    refreshRelativeMetadataLists();
 }
 #endif
 

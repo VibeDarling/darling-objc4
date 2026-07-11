@@ -30,6 +30,7 @@
 #if defined(DARLING)
 bool relativeMetadataImageIsLoaded(uint16_t imageIndex);
 void refreshRelativeMetadataLists();
+void refreshRelativeMetadataListsFromFallback();
 #endif
 
 // class_data_bits_t is the class_t->data field (class_rw_t pointer plus flags)

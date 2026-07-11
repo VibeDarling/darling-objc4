@@ -2454,18 +2454,42 @@ NONLAZY_CLASS_LOAD
 
 // Replaced by CF (returns an NSMethodSignature)
 + (NSMethodSignature *)instanceMethodSignatureForSelector:(SEL)sel {
+#if defined(DARLING)
+    Class cls = object_getClass(self);
+    IMP before = class_getMethodImplementation(cls, _cmd);
+    refreshRelativeMetadataListsFromFallback();
+    IMP after = class_getMethodImplementation(cls, _cmd);
+    if (after != before)
+        return ((NSMethodSignature *(*)(id, SEL, SEL))after)(self, _cmd, sel);
+#endif
     _objc_fatal("+[NSObject instanceMethodSignatureForSelector:] "
                 "not available without CoreFoundation");
 }
 
 // Replaced by CF (returns an NSMethodSignature)
 + (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
+#if defined(DARLING)
+    Class cls = object_getClass(self);
+    IMP before = class_getMethodImplementation(cls, _cmd);
+    refreshRelativeMetadataListsFromFallback();
+    IMP after = class_getMethodImplementation(cls, _cmd);
+    if (after != before)
+        return ((NSMethodSignature *(*)(id, SEL, SEL))after)(self, _cmd, sel);
+#endif
     _objc_fatal("+[NSObject methodSignatureForSelector:] "
                 "not available without CoreFoundation");
 }
 
 // Replaced by CF (returns an NSMethodSignature)
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
+#if defined(DARLING)
+    Class cls = object_getClass(self);
+    IMP before = class_getMethodImplementation(cls, _cmd);
+    refreshRelativeMetadataListsFromFallback();
+    IMP after = class_getMethodImplementation(cls, _cmd);
+    if (after != before)
+        return ((NSMethodSignature *(*)(id, SEL, SEL))after)(self, _cmd, sel);
+#endif
     _objc_fatal("-[NSObject methodSignatureForSelector:] "
                 "not available without CoreFoundation");
 }
