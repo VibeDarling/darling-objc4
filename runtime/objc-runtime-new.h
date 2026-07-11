@@ -1038,6 +1038,25 @@ struct protocol_list_t {
     }
 };
 
+#if defined(DARLING)
+template <typename List>
+struct relative_list_entry_t {
+    uint64_t raw;
+
+    List *list() const {
+        intptr_t offset = (intptr_t)((int64_t)raw >> 16);
+        return (List *)((intptr_t)this + offset);
+    }
+};
+
+template <typename List>
+struct relative_list_list_t {
+    uint32_t entsize;
+    uint32_t count;
+    relative_list_entry_t<List> entries[0];
+};
+#endif
+
 struct class_ro_t {
     uint32_t flags;
     uint32_t instanceStart;
@@ -1085,6 +1104,9 @@ struct class_ro_t {
 #endif
 
     method_list_t *baseMethods() const {
+#if defined(DARLING)
+        if ((uintptr_t)baseMethodList & 1) return nullptr;
+#endif
 #if __has_feature(ptrauth_calls)
         method_list_t *ptr = ptrauth_strip((method_list_t *)baseMethodList, ptrauth_key_method_list_pointer);
         if (ptr == nullptr)
@@ -1109,6 +1131,81 @@ struct class_ro_t {
         return (method_list_t *)baseMethodList;
 #endif
     }
+
+    bool hasBaseMethods() const {
+        return baseMethodList != nullptr;
+    }
+
+    uint32_t baseMethodListCount() const {
+#if defined(DARLING)
+        if ((uintptr_t)baseMethodList & 1) {
+            auto lists = (const relative_list_list_t<method_list_t> *)
+                ((uintptr_t)baseMethodList & ~(uintptr_t)3);
+            return lists->count;
+        }
+#endif
+        return baseMethods() ? 1 : 0;
+    }
+
+    void copyBaseMethodLists(method_list_t **result) const {
+#if defined(DARLING)
+        if ((uintptr_t)baseMethodList & 1) {
+            auto lists = (const relative_list_list_t<method_list_t> *)
+                ((uintptr_t)baseMethodList & ~(uintptr_t)3);
+            for (uint32_t i = 0; i != lists->count; ++i)
+                result[i] = lists->entries[i].list();
+            return;
+        }
+#endif
+        if (auto list = baseMethods()) result[0] = list;
+    }
+
+#if defined(DARLING)
+    bool hasRelativeMetadataLists() const {
+        return (((uintptr_t)baseMethodList | (uintptr_t)baseProperties |
+                 (uintptr_t)baseProtocols) & 1) != 0;
+    }
+
+    uint32_t basePropertyListCount() const {
+        if ((uintptr_t)baseProperties & 1) {
+            auto lists = (const relative_list_list_t<property_list_t> *)
+                ((uintptr_t)baseProperties & ~(uintptr_t)3);
+            return lists->count;
+        }
+        return baseProperties ? 1 : 0;
+    }
+
+    void copyBasePropertyLists(property_list_t **result) const {
+        if ((uintptr_t)baseProperties & 1) {
+            auto lists = (const relative_list_list_t<property_list_t> *)
+                ((uintptr_t)baseProperties & ~(uintptr_t)3);
+            for (uint32_t i = 0; i != lists->count; ++i)
+                result[i] = lists->entries[i].list();
+        } else if (baseProperties) {
+            result[0] = baseProperties;
+        }
+    }
+
+    uint32_t baseProtocolListCount() const {
+        if ((uintptr_t)baseProtocols & 1) {
+            auto lists = (const relative_list_list_t<protocol_list_t> *)
+                ((uintptr_t)baseProtocols & ~(uintptr_t)3);
+            return lists->count;
+        }
+        return baseProtocols ? 1 : 0;
+    }
+
+    void copyBaseProtocolLists(protocol_list_t **result) const {
+        if ((uintptr_t)baseProtocols & 1) {
+            auto lists = (const relative_list_list_t<protocol_list_t> *)
+                ((uintptr_t)baseProtocols & ~(uintptr_t)3);
+            for (uint32_t i = 0; i != lists->count; ++i)
+                result[i] = lists->entries[i].list();
+        } else if (baseProtocols) {
+            result[0] = baseProtocols;
+        }
+    }
+#endif
 
     uintptr_t baseMethodListPtrauthData() const {
         return ptrauth_blend_discriminator(&baseMethodList,
@@ -1290,6 +1387,12 @@ class list_array_tt {
         return *this;
     }
 
+#if defined(DARLING)
+    bool storageInSharedCache() const {
+        return hasArray() && objc::inSharedCache((uintptr_t)array());
+    }
+#endif
+
     uint32_t count() const {
         uint32_t result = 0;
         for (auto lists = beginLists(), end = endLists(); 
@@ -1345,6 +1448,12 @@ class list_array_tt {
     void attachLists(List* const * addedLists, uint32_t addedCount) {
         if (addedCount == 0) return;
 
+#if defined(DARLING)
+        if (hasArray() && objc::inSharedCache((uintptr_t)array())) {
+            _objc_inform("attaching to cached list array owner=%p array=%p caller=%p",
+                         this, array(), __builtin_return_address(0));
+        }
+#endif
         if (hasArray()) {
             // many lists -> many lists
             uint32_t oldCount = array()->count;
@@ -1522,11 +1631,24 @@ public:
     class_rw_ext_t *extAllocIfNeeded() {
         auto v = get_ro_or_rwe();
         if (fastpath(v.is<class_rw_ext_t *>())) {
-            return v.get<class_rw_ext_t *>(&ro_or_rw_ext);
+            auto rwe = v.get<class_rw_ext_t *>(&ro_or_rw_ext);
+#if defined(DARLING)
+            if (objc::inSharedCache((uintptr_t)rwe) ||
+                rwe->methods.storageInSharedCache()) {
+                return extAlloc(rwe->ro);
+            }
+#endif
+            return rwe;
         } else {
             return extAlloc(v.get<const class_ro_t *>(&ro_or_rw_ext));
         }
     }
+
+#if defined(DARLING)
+    class_rw_ext_t *replaceCachedExt(const class_ro_t *ro) {
+        return extAlloc(ro);
+    }
+#endif
 
     class_rw_ext_t *deepCopy(const class_ro_t *ro) {
         return extAlloc(ro, true);

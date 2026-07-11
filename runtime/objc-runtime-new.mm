@@ -312,6 +312,11 @@ bool method_list_t::isUniqued() const {
 }
 
 bool method_list_t::isFixedUp() const {
+#if defined(DARLING)
+    // Shared-cache method lists are preoptimized and immutable. Newer caches
+    // may use flag encodings this older runtime does not recognize.
+    if (objc::inSharedCache((uintptr_t)this)) return true;
+#endif
     // Ignore any flags in the top bits, just look at the bottom two.
     return (flags() & 0x3) == fixed_up_method_list;
 }
@@ -348,7 +353,7 @@ const method_list_t_authed_ptr<method_list_t> *method_array_t::endCategoryMethod
     auto mlists = beginLists();
     auto mlistsEnd = endLists();
 
-    if (mlists == mlistsEnd  ||  !cls->data()->ro()->baseMethods())
+    if (mlists == mlistsEnd  ||  !cls->data()->ro()->hasBaseMethods())
     {
         // No methods, or no base methods. 
         // Everything here is a category method.
@@ -1349,10 +1354,16 @@ class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
 
     rwe->version = (ro->flags & RO_META) ? 7 : 0;
 
-    method_list_t *list = ro->baseMethods();
-    if (list) {
-        if (deepCopy) list = list->duplicate();
-        rwe->methods.attachLists(&list, 1);
+    uint32_t methodListCount = ro->baseMethodListCount();
+    if (methodListCount) {
+        method_list_t **lists = (method_list_t **)malloc(sizeof(*lists) * methodListCount);
+        ro->copyBaseMethodLists(lists);
+        if (deepCopy) {
+            for (uint32_t i = 0; i != methodListCount; ++i)
+                lists[i] = lists[i]->duplicate();
+        }
+        rwe->methods.attachLists(lists, methodListCount);
+        free(lists);
     }
 
     // See comments in objc_duplicateClass
@@ -1360,14 +1371,38 @@ class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
     // have not been deep-copied
     //
     // This is probably wrong and ought to be fixed some day
-    property_list_t *proplist = ro->baseProperties;
-    if (proplist) {
-        rwe->properties.attachLists(&proplist, 1);
+    uint32_t propertyListCount =
+#if defined(DARLING)
+        ro->basePropertyListCount();
+#else
+        ro->baseProperties ? 1 : 0;
+#endif
+    if (propertyListCount) {
+        property_list_t **lists = (property_list_t **)malloc(sizeof(*lists) * propertyListCount);
+#if defined(DARLING)
+        ro->copyBasePropertyLists(lists);
+#else
+        lists[0] = ro->baseProperties;
+#endif
+        rwe->properties.attachLists(lists, propertyListCount);
+        free(lists);
     }
 
-    protocol_list_t *protolist = ro->baseProtocols;
-    if (protolist) {
-        rwe->protocols.attachLists(&protolist, 1);
+    uint32_t protocolListCount =
+#if defined(DARLING)
+        ro->baseProtocolListCount();
+#else
+        ro->baseProtocols ? 1 : 0;
+#endif
+    if (protocolListCount) {
+        protocol_list_t **lists = (protocol_list_t **)malloc(sizeof(*lists) * protocolListCount);
+#if defined(DARLING)
+        ro->copyBaseProtocolLists(lists);
+#else
+        lists[0] = ro->baseProtocols;
+#endif
+        rwe->protocols.attachLists(lists, protocolListCount);
+        free(lists);
     }
 
     set_ro_or_rwe(rwe, ro);
@@ -1479,6 +1514,16 @@ static void methodizeClass(Class cls, Class previously)
     auto rw = cls->data();
     auto ro = rw->ro();
     auto rwe = rw->ext();
+#if defined(DARLING)
+    bool baseListsAlreadyAttached = false;
+    if (rwe && objc::inSharedCache((uintptr_t)ro)) {
+        rwe = rw->replaceCachedExt(ro);
+        baseListsAlreadyAttached = true;
+    } else if (!rwe && ro->hasRelativeMetadataLists()) {
+        rwe = rw->extAllocIfNeeded();
+        baseListsAlreadyAttached = true;
+    }
+#endif
 
     // Methodizing for the first time
     if (PrintConnecting) {
@@ -1487,19 +1532,34 @@ static void methodizeClass(Class cls, Class previously)
     }
 
     // Install methods and properties that the class implements itself.
-    method_list_t *list = ro->baseMethods();
-    if (list) {
-        prepareMethodLists(cls, &list, 1, YES, isBundleClass(cls), nullptr);
-        if (rwe) rwe->methods.attachLists(&list, 1);
+    uint32_t baseListCount = ro->baseMethodListCount();
+    if (baseListCount) {
+        method_list_t **lists = (method_list_t **)malloc(sizeof(*lists) * baseListCount);
+        ro->copyBaseMethodLists(lists);
+        prepareMethodLists(cls, lists, baseListCount, YES, isBundleClass(cls), nullptr);
+        if (rwe
+#if defined(DARLING)
+            && !baseListsAlreadyAttached
+#endif
+        ) rwe->methods.attachLists(lists, baseListCount);
+        free(lists);
     }
 
     property_list_t *proplist = ro->baseProperties;
-    if (rwe && proplist) {
+    if (rwe && proplist
+#if defined(DARLING)
+        && !baseListsAlreadyAttached
+#endif
+    ) {
         rwe->properties.attachLists(&proplist, 1);
     }
 
     protocol_list_t *protolist = ro->baseProtocols;
-    if (rwe && protolist) {
+    if (rwe && protolist
+#if defined(DARLING)
+        && !baseListsAlreadyAttached
+#endif
+    ) {
         rwe->protocols.attachLists(&protolist, 1);
     }
 
@@ -1528,12 +1588,14 @@ static void methodizeClass(Class cls, Class previously)
 
 #if DEBUG
     // Debug: sanity-check all SELs; log method list contents
-    for (const auto& meth : rw->methods()) {
-        if (PrintConnecting) {
-            _objc_inform("METHOD %c[%s %s]", isMeta ? '+' : '-', 
-                         cls->nameForLogging(), sel_getName(meth.name()));
+    if (!objc::inSharedCache((uintptr_t)ro)) {
+        for (const auto& meth : rw->methods()) {
+            if (PrintConnecting) {
+                _objc_inform("METHOD %c[%s %s]", isMeta ? '+' : '-',
+                             cls->nameForLogging(), sel_getName(meth.name()));
+            }
+            ASSERT(sel_registerName(sel_getName(meth.name())) == meth.name());
         }
-        ASSERT(sel_registerName(sel_getName(meth.name())) == meth.name());
     }
 #endif
 }

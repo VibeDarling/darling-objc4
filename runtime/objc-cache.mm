@@ -956,6 +956,10 @@ void cache_t::eraseNolock(const char *func)
         c->setDisallowPreoptCaches();
     } else if (occupied() > 0) {
         auto capacity = this->capacity();
+        if (capacity == 0) {
+            setBucketsAndMask(emptyBuckets(), 0);
+            return;
+        }
         auto oldBuckets = buckets();
         auto buckets = emptyBucketsForCapacity(capacity);
 
