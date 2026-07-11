@@ -607,6 +607,9 @@ map_images_nolock(unsigned mhCount, const char * const mhPaths[],
 
     if (hCount > 0) {
         _read_images(hList, hCount, totalClasses, unoptimizedTotalClasses);
+#if defined(DARLING)
+        refreshRelativeMetadataLists();
+#endif
     }
 
     firstTime = NO;

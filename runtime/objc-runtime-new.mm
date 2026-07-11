@@ -1600,6 +1600,81 @@ static void methodizeClass(Class cls, Class previously)
 #endif
 }
 
+#if defined(DARLING)
+void refreshRelativeMetadataLists()
+{
+    runtimeLock.assertLocked();
+
+    foreach_realized_class_and_metaclass(^(Class cls) {
+        auto rw = cls->data();
+        auto ro = rw->ro();
+        if (!objc::inSharedCache((uintptr_t)ro) ||
+            !ro->hasRelativeMetadataLists()) {
+            return true;
+        }
+
+        auto rwe = rw->extAllocIfNeeded();
+
+        uint32_t methodCount = ro->baseMethodListCount();
+        if (methodCount) {
+            method_list_t **loaded = (method_list_t **)
+                malloc(sizeof(*loaded) * methodCount);
+            method_list_t **missing = (method_list_t **)
+                malloc(sizeof(*missing) * methodCount);
+            ro->copyBaseMethodLists(loaded);
+            uint32_t missingCount = 0;
+            for (uint32_t i = 0; i != methodCount; ++i) {
+                if (!rwe->methods.containsList(loaded[i]))
+                    missing[missingCount++] = loaded[i];
+            }
+            if (missingCount) {
+                prepareMethodLists(cls, missing, missingCount, YES,
+                                   isBundleClass(cls), nullptr);
+                rwe->methods.attachLists(missing, missingCount);
+            }
+            free(missing);
+            free(loaded);
+        }
+
+        uint32_t propertyCount = ro->basePropertyListCount();
+        if (propertyCount) {
+            property_list_t **loaded = (property_list_t **)
+                malloc(sizeof(*loaded) * propertyCount);
+            property_list_t **missing = (property_list_t **)
+                malloc(sizeof(*missing) * propertyCount);
+            ro->copyBasePropertyLists(loaded);
+            uint32_t missingCount = 0;
+            for (uint32_t i = 0; i != propertyCount; ++i) {
+                if (!rwe->properties.containsList(loaded[i]))
+                    missing[missingCount++] = loaded[i];
+            }
+            rwe->properties.attachLists(missing, missingCount);
+            free(missing);
+            free(loaded);
+        }
+
+        uint32_t protocolCount = ro->baseProtocolListCount();
+        if (protocolCount) {
+            protocol_list_t **loaded = (protocol_list_t **)
+                malloc(sizeof(*loaded) * protocolCount);
+            protocol_list_t **missing = (protocol_list_t **)
+                malloc(sizeof(*missing) * protocolCount);
+            ro->copyBaseProtocolLists(loaded);
+            uint32_t missingCount = 0;
+            for (uint32_t i = 0; i != protocolCount; ++i) {
+                if (!rwe->protocols.containsList(loaded[i]))
+                    missing[missingCount++] = loaded[i];
+            }
+            rwe->protocols.attachLists(missing, missingCount);
+            free(missing);
+            free(loaded);
+        }
+
+        return true;
+    });
+}
+#endif
+
 
 /***********************************************************************
 * nonMetaClasses

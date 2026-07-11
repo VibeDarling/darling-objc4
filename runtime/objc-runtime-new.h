@@ -27,6 +27,11 @@
 #include "PointerUnion.h"
 #include <type_traits>
 
+#if defined(DARLING)
+bool relativeMetadataImageIsLoaded(uint16_t imageIndex);
+void refreshRelativeMetadataLists();
+#endif
+
 // class_data_bits_t is the class_t->data field (class_rw_t pointer plus flags)
 // The extra bits are optimized for the retain/release and alloc/dealloc paths.
 
@@ -1043,6 +1048,10 @@ template <typename List>
 struct relative_list_entry_t {
     uint64_t raw;
 
+    uint16_t imageIndex() const {
+        return raw & 0xffff;
+    }
+
     List *list() const {
         intptr_t offset = (intptr_t)((int64_t)raw >> 16);
         return (List *)((intptr_t)this + offset);
@@ -1054,6 +1063,30 @@ struct relative_list_list_t {
     uint32_t entsize;
     uint32_t count;
     relative_list_entry_t<List> entries[0];
+
+    const relative_list_entry_t<List> &entry(uint32_t index) const {
+        return *(const relative_list_entry_t<List> *)
+            ((const uint8_t *)entries + index * entsize);
+    }
+
+    uint32_t loadedCount() const {
+        uint32_t result = 0;
+        if (entsize < sizeof(relative_list_entry_t<List>)) return 0;
+        for (uint32_t i = 0; i != count; ++i) {
+            if (relativeMetadataImageIsLoaded(entry(i).imageIndex())) ++result;
+        }
+        return result;
+    }
+
+    void copyLoadedLists(List **result) const {
+        if (entsize < sizeof(relative_list_entry_t<List>)) return;
+        for (uint32_t i = 0; i != count; ++i) {
+            const auto &candidate = entry(i);
+            if (relativeMetadataImageIsLoaded(candidate.imageIndex())) {
+                *result++ = candidate.list();
+            }
+        }
+    }
 };
 #endif
 
@@ -1141,7 +1174,7 @@ struct class_ro_t {
         if ((uintptr_t)baseMethodList & 1) {
             auto lists = (const relative_list_list_t<method_list_t> *)
                 ((uintptr_t)baseMethodList & ~(uintptr_t)3);
-            return lists->count;
+            return lists->loadedCount();
         }
 #endif
         return baseMethods() ? 1 : 0;
@@ -1152,8 +1185,7 @@ struct class_ro_t {
         if ((uintptr_t)baseMethodList & 1) {
             auto lists = (const relative_list_list_t<method_list_t> *)
                 ((uintptr_t)baseMethodList & ~(uintptr_t)3);
-            for (uint32_t i = 0; i != lists->count; ++i)
-                result[i] = lists->entries[i].list();
+            lists->copyLoadedLists(result);
             return;
         }
 #endif
@@ -1170,7 +1202,7 @@ struct class_ro_t {
         if ((uintptr_t)baseProperties & 1) {
             auto lists = (const relative_list_list_t<property_list_t> *)
                 ((uintptr_t)baseProperties & ~(uintptr_t)3);
-            return lists->count;
+            return lists->loadedCount();
         }
         return baseProperties ? 1 : 0;
     }
@@ -1179,8 +1211,7 @@ struct class_ro_t {
         if ((uintptr_t)baseProperties & 1) {
             auto lists = (const relative_list_list_t<property_list_t> *)
                 ((uintptr_t)baseProperties & ~(uintptr_t)3);
-            for (uint32_t i = 0; i != lists->count; ++i)
-                result[i] = lists->entries[i].list();
+            lists->copyLoadedLists(result);
         } else if (baseProperties) {
             result[0] = baseProperties;
         }
@@ -1190,7 +1221,7 @@ struct class_ro_t {
         if ((uintptr_t)baseProtocols & 1) {
             auto lists = (const relative_list_list_t<protocol_list_t> *)
                 ((uintptr_t)baseProtocols & ~(uintptr_t)3);
-            return lists->count;
+            return lists->loadedCount();
         }
         return baseProtocols ? 1 : 0;
     }
@@ -1199,8 +1230,7 @@ struct class_ro_t {
         if ((uintptr_t)baseProtocols & 1) {
             auto lists = (const relative_list_list_t<protocol_list_t> *)
                 ((uintptr_t)baseProtocols & ~(uintptr_t)3);
-            for (uint32_t i = 0; i != lists->count; ++i)
-                result[i] = lists->entries[i].list();
+            lists->copyLoadedLists(result);
         } else if (baseProtocols) {
             result[0] = baseProtocols;
         }
@@ -1391,6 +1421,14 @@ class list_array_tt {
     bool storageInSharedCache() const {
         return hasArray() && objc::inSharedCache((uintptr_t)array());
     }
+
+    bool containsList(List *candidate) const {
+        for (auto cursor = beginLists(), finish = endLists();
+             cursor != finish; ++cursor) {
+            if ((List *)*cursor == candidate) return true;
+        }
+        return false;
+    }
 #endif
 
     uint32_t count() const {
@@ -1448,12 +1486,6 @@ class list_array_tt {
     void attachLists(List* const * addedLists, uint32_t addedCount) {
         if (addedCount == 0) return;
 
-#if defined(DARLING)
-        if (hasArray() && objc::inSharedCache((uintptr_t)array())) {
-            _objc_inform("attaching to cached list array owner=%p array=%p caller=%p",
-                         this, array(), __builtin_return_address(0));
-        }
-#endif
         if (hasArray()) {
             // many lists -> many lists
             uint32_t oldCount = array()->count;
