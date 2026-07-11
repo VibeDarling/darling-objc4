@@ -376,6 +376,7 @@ void bucket_t::set(bucket_t *base, SEL newSel, IMP newImp, Class cls)
 void cache_t::initializeToEmpty()
 {
     _bucketsAndMaybeMask.store((uintptr_t)&_objc_empty_cache, std::memory_order_relaxed);
+    _occupied = 0;
     _originalPreoptCache.store(nullptr, std::memory_order_relaxed);
 }
 
@@ -748,6 +749,12 @@ bucket_t *cache_t::emptyBucketsForCapacity(mask_t capacity, bool allocate)
 
 bool cache_t::isConstantEmptyCache() const
 {
+#if defined(DARLING)
+    // Authoritative-cache classes can retain the cache's old occupancy while
+    // their buckets are redirected to this runtime's immutable empty sentinel.
+    // The sentinel can never contain entries and must never be freed.
+    if (buckets() == emptyBuckets()) return true;
+#endif
     return
         occupied() == 0  &&
         buckets() == emptyBucketsForCapacity(capacity(), false);
