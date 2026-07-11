@@ -693,7 +693,18 @@ bucket_t *cache_t::allocateBuckets(mask_t newCapacity)
 {
     if (PrintCaches) recordNewCache(newCapacity);
 
-    return (bucket_t *)calloc(bytesForCapacity(newCapacity), 1);
+    size_t bytes = bytesForCapacity(newCapacity);
+    bucket_t *buckets = (bucket_t *)calloc(bytes, 1);
+#if defined(DARLING)
+    // Cache scans require every unused selector slot to be exactly zero.
+    // Cached libmalloc can recycle large calloc regions without clearing
+    // their former cache entries under Darling's VM compatibility layer.
+    volatile uintptr_t *words = (volatile uintptr_t *)buckets;
+    for (size_t i = 0; i < bytes / sizeof(*words); i++) {
+        words[i] = 0;
+    }
+#endif
+    return buckets;
 }
 
 #endif
