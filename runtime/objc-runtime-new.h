@@ -584,6 +584,13 @@ struct RelativePointer: nocopy_t {
         uintptr_t pointer = base + signExtendedOffset;
         return (T)pointer;
     }
+
+    T get(uintptr_t base) const {
+        if (offset == 0)
+            return nullptr;
+        uintptr_t signExtendedOffset = (uintptr_t)(intptr_t)offset;
+        return (T)(base + signExtendedOffset);
+    }
 };
 
 
@@ -733,6 +740,10 @@ namespace objc {
 static inline bool inSharedCache(uintptr_t ptr);
 }
 
+#if defined(DARLING)
+extern "C" uintptr_t sharedCacheRelativeMethodBase();
+#endif
+
 struct method_t {
     static const uint32_t smallMethodListFlag = 0x80000000;
 
@@ -800,9 +811,14 @@ public:
 
     SEL name() const {
         if (isSmall()) {
-            return (small().inSharedCache()
-                    ? (SEL)small().name.get()
-                    : *(SEL *)small().name.get());
+            if (small().inSharedCache()) {
+#if defined(DARLING)
+                if (uintptr_t base = sharedCacheRelativeMethodBase())
+                    return (SEL)small().name.get(base);
+#endif
+                return (SEL)small().name.get();
+            }
+            return *(SEL *)small().name.get();
         } else {
             return big().name;
         }
@@ -823,6 +839,10 @@ public:
 
     SEL getSmallNameAsSEL() const {
         ASSERT(small().inSharedCache());
+#if defined(DARLING)
+        if (uintptr_t base = sharedCacheRelativeMethodBase())
+            return (SEL)small().name.get(base);
+#endif
         return (SEL)small().name.get();
     }
 
