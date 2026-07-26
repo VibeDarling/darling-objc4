@@ -2454,7 +2454,7 @@ NONLAZY_CLASS_LOAD
 
 // Replaced by CF (returns an NSMethodSignature)
 + (NSMethodSignature *)instanceMethodSignatureForSelector:(SEL)sel {
-#if defined(DARLING)
+#if defined(DARLING) && __OBJC2__
     Class cls = object_getClass(self);
     IMP before = class_getMethodImplementation(cls, _cmd);
     refreshRelativeMetadataListsFromFallback();
@@ -2468,7 +2468,7 @@ NONLAZY_CLASS_LOAD
 
 // Replaced by CF (returns an NSMethodSignature)
 + (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
-#if defined(DARLING)
+#if defined(DARLING) && __OBJC2__
     Class cls = object_getClass(self);
     IMP before = class_getMethodImplementation(cls, _cmd);
     refreshRelativeMetadataListsFromFallback();
@@ -2482,7 +2482,7 @@ NONLAZY_CLASS_LOAD
 
 // Replaced by CF (returns an NSMethodSignature)
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
-#if defined(DARLING)
+#if defined(DARLING) && __OBJC2__
     Class cls = object_getClass(self);
     IMP before = class_getMethodImplementation(cls, _cmd);
     refreshRelativeMetadataListsFromFallback();

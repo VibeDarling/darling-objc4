@@ -400,7 +400,7 @@ unsigned int getPreoptimizedClassUnreasonableCount()
 
 Class getPreoptimizedClass(const char *name)
 {
-#if defined(DARLING)
+#if defined(DARLING) && __OBJC2__
     static bool refreshedRelativeMetadata = false;
     if (!refreshedRelativeMetadata && _dyld_objc_class_count() != 0) {
         refreshedRelativeMetadata = true;
