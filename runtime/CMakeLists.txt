@@ -15,15 +15,21 @@ endif(COMMAND cmake_policy)
 add_definitions(-D__STDC_NO_ATOMICS__)
 
 # Override DEBUG CFLAGS because -O0 has been triggering strange bugs
-set(CMAKE_C_FLAGS_DEBUG "-ggdb -DOBJC_IS_DEBUG_BUILD=1")
-set(CMAKE_CXX_FLAGS_DEBUG "-ggdb -DOBJC_IS_DEBUG_BUILD=1")
+set(CMAKE_C_FLAGS_DEBUG "-ggdb")
+set(CMAKE_CXX_FLAGS_DEBUG "-ggdb")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -nostdinc -O2 -D__DARWIN_UNIX03 -fPIC -fblocks -fobjc-legacy-dispatch -fvisibility-inlines-hidden -fstrict-aliasing -fno-delete-null-pointer-checks")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -nostdinc -nostdinc++ -O2 -std=gnu++14 -D__DARWIN_UNIX03 -fPIC -fblocks -fobjc-legacy-dispatch \
 			-fno-rtti -fno-exceptions -Wno-c++11-narrowing -fvisibility-inlines-hidden -Wno-invalid-offsetof -Wno-deprecated-objc-isa-usage \
 			-Wno-cast-of-sel-type -Wstrict-aliasing=2 -Wstrict-overflow=4 -fstrict-aliasing -fno-delete-null-pointer-checks")
 
-add_definitions(-DOBJC_NO_GC -DOBJC_IS_DEBUG_BUILD=1)
+# OBJC_IS_DEBUG_BUILD must match objc-config.h's DEBUG (which is !NDEBUG).
+# Release/RelWithDebInfo/MinSizeRel inject -DNDEBUG -> DEBUG=0 -> need =0.
+# Debug and empty build types do not -> DEBUG=1 -> need =1.
+add_compile_definitions(
+	OBJC_NO_GC
+	$<IF:$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>,OBJC_IS_DEBUG_BUILD=0,OBJC_IS_DEBUG_BUILD=1>
+)
 add_definitions(-DTARGET_OS_IPHONE=0 -DOS_OBJECT_USE_OBJC=0 -D_LIBCPP_VISIBLE="")
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -70,6 +76,7 @@ set(objc_SRCS
 	objc-sel-table.S
 	Messengers.subproj/objc-msg-arm.S
 	Messengers.subproj/objc-msg-arm64.S
+	Messengers.subproj/objc-retain-release-helpers-arm64.S
 	Messengers.subproj/objc-msg-i386.S
 	Messengers.subproj/objc-msg-x86_64.S
 )
