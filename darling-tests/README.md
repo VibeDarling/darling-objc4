@@ -48,5 +48,32 @@ Concurrent mode gates eight threads before the first allocation, checks the
 class is still unrealized, then releases them to perform 1,000 allocations each.
 All threads check object identity/size and dispose their instances. Assertions
 must remain enabled. This is a bounded stress case, not a race-detector proof.
-The fixture does not cover Swift initialization or the internal root/batch/zone
-allocation entry points.
+The raw fixture does not cover the internal root/batch/zone allocation entry points.
+
+## Synthetic Swift metadata
+
+Build `swift-allocation.m` with the same stage flags and libraries. It reuses
+upstream's `test/swift-class-def.m`, without requiring a Swift compiler. Run it
+through `run-staged.sh` with modes `swift`, `swift-replacement`, or
+`swift-replacement-lookup`. Assertions must remain enabled.
+
+`swift` exercises the real runtime's metadata callback. The callback allocates
+a previously unrealized nested class, testing lock release/reentry, then realizes
+its own metadata. Checks cover one callback, returned instance identity/size,
+nil allocation, disposal and subsequent allocation without another callback.
+The candidate passes on staged ARM64; public f3cd60dd aborts before the callback
+at the allocation helper's realization assertion.
+
+The replacement modes are currently **failing diagnostic cases**, not passing
+regressions. The callback clones metadata to the heap and calls
+`_objc_realizeClassFromSwift(newClass, oldClass)`. Candidate direct allocation
+aborts in `addRemappedClass`. The lookup control triggers realization through
+`objc_getClass` first, including for the nested class: both public and candidate
+abort at the same remapping assertion, after a duplicate-name warning. Thus the
+failure is reproducible through an existing upstream path independently of this
+allocation change. The callback and its caller both attempt to register the
+remapping; supported relocation semantics need further investigation. Do not
+treat replacement-class integration as validated or suppress these failures.
+
+These are synthetic metadata fixtures against the real Objective-C runtime,
+not tests of a Swift language runtime, Swift concurrency or a Swift application.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Run a prelinked ARM64 fixture in an isolated, disposable staged prefix.
-# Usage: bash darling-tests/run-staged.sh INSTALL_ROOT BINARY raw|lookup|concurrent [LIBOBJC]
+# Usage: bash darling-tests/run-staged.sh INSTALL_ROOT BINARY MODE [LIBOBJC]
 set -euo pipefail
 install_root=$(realpath "${1:?staged install root required}")
 binary=$(realpath "${2:?ARM64 Mach-O fixture required}")
-mode=${3:?raw, lookup or concurrent required}
-case "$mode" in raw|lookup|concurrent) ;; *) exit 2 ;; esac
+mode=${3:?fixture mode required}
+case "$mode" in raw|lookup|concurrent|swift|swift-replacement|swift-replacement-lookup) ;; *) exit 2 ;; esac
 [[ $(uname -m) == aarch64 && -x "$binary" && -x "$install_root/bin/darlingserver" ]]
 image=${DARLING_ARM64_IMAGE:-darling-arm64-dev:latest}
 container="codex-objc-allocation-${mode}-$$"
