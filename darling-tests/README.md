@@ -12,6 +12,7 @@ On a Darwin-compatible development environment, link against the runtime under t
 clang -fno-objc-arc darling-tests/raw-allocation.m -lobjc -o raw-allocation
 ./raw-allocation raw
 ./raw-allocation lookup
+./raw-allocation concurrent
 ```
 
 For an existing native ARM64 Darling stage build, `build-isolated.rb` recompiles
@@ -26,11 +27,14 @@ ruby darling-tests/build-isolated.rb CHECKOUT STAGE_BUILD LOCAL_SOURCE NEW_OUTPU
 
 Compile/link the fixture for ARM64 with the stage SDK/cctools linker, libobjc and
 libSystem; use the complete installed root as the linker syslibroot for reexports.
+Retain the stage's Darling preprocessor definitions (including DARLING and
+_DARWIN_C_SOURCE) so pthread declarations use the supported symbol names.
 Then run the prelinked fixture with a selected dylib override:
 
 ```sh
 bash darling-tests/run-staged.sh INSTALL_ROOT FIXTURE_BINARY raw NEW_OUTPUT/libobjc.A.dylib
 bash darling-tests/run-staged.sh INSTALL_ROOT FIXTURE_BINARY lookup NEW_OUTPUT/libobjc.A.dylib
+bash darling-tests/run-staged.sh INSTALL_ROOT FIXTURE_BINARY concurrent NEW_OUTPUT/libobjc.A.dylib
 ```
 
 The runner needs Docker and the existing darling-arm64-dev image (override with
@@ -40,5 +44,9 @@ disposable prefix. It requires the fixture's PASS marker, not merely server exit
 zero. No installed runtime is overwritten. Build logs remain in NEW_OUTPUT.
 
 These helpers are standalone and not wired into objc4's Apple test harness.
-The fixture does not cover Swift initialization, concurrent allocation or the
-internal root/batch/zone allocation entry points.
+Concurrent mode gates eight threads before the first allocation, checks the
+class is still unrealized, then releases them to perform 1,000 allocations each.
+All threads check object identity/size and dispose their instances. Assertions
+must remain enabled. This is a bounded stress case, not a race-detector proof.
+The fixture does not cover Swift initialization or the internal root/batch/zone
+allocation entry points.
