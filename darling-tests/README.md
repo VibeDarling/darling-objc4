@@ -72,8 +72,17 @@ aborts in `addRemappedClass`. The lookup control triggers realization through
 abort at the same remapping assertion, after a duplicate-name warning. Thus the
 failure is reproducible through an existing upstream path independently of this
 allocation change. The callback and its caller both attempt to register the
-remapping; supported relocation semantics need further investigation. Do not
-treat replacement-class integration as validated or suppress these failures.
+remapping. Upstream `runtime/objc-runtime-new.mm` explicitly documents only
+in-place realization (`previously == cls`) and construction of a new class
+(`previously == nil`) as supported by `_objc_realizeClassFromSwift`.
+`realizeSwiftClass` likewise says that callback relocation is not accepted yet.
+The replacement diagnostics therefore exercise an unsupported contract, not a
+required passing allocation regression. They are retained to expose that limit;
+do not treat replacement-class integration as validated or suppress failures.
+The supported `swift` test uses in-place realization. Adding relocation support
+would require a separate runtime change and is not supplied by this allocation
+fix. Keeping the helper's returned class pointer follows its interface without
+claiming that unsupported callback relocation now works.
 
 These are synthetic metadata fixtures against the real Objective-C runtime,
 not tests of a Swift language runtime, Swift concurrency or a Swift application.
