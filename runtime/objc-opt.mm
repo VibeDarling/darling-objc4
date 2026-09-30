@@ -30,12 +30,18 @@
 #include "objc-os.h"
 #include "objc-file.h"
 
-#if defined(DARLING)
+#if defined(DARLING) && __OBJC2__
+#include <dlfcn.h>
+
 bool relativeMetadataImageIsLoaded(uint16_t imageIndex)
 {
     extern bool darling_test_relative_image_loaded;
     if (imageIndex == 65535) return darling_test_relative_image_loaded;
-    return _dyld_is_preoptimized_objc_image_loaded(imageIndex);
+    typedef bool (*fn_t)(uint16_t);
+    static fn_t fn = (fn_t)dlsym(RTLD_DEFAULT, "_dyld_is_preoptimized_objc_image_loaded");
+    if (fn)
+        return fn(imageIndex);
+    return false;
 }
 #endif
 
@@ -403,8 +409,10 @@ unsigned int getPreoptimizedClassUnreasonableCount()
 Class getPreoptimizedClass(const char *name)
 {
 #if defined(DARLING) && __OBJC2__
+    typedef size_t (*count_fn_t)(void);
+    static count_fn_t count_fn = (count_fn_t)dlsym(RTLD_DEFAULT, "_dyld_objc_class_count");
     static bool refreshedRelativeMetadata = false;
-    if (!refreshedRelativeMetadata && _dyld_objc_class_count() != 0) {
+    if (!refreshedRelativeMetadata && count_fn && count_fn() != 0) {
         refreshedRelativeMetadata = true;
         refreshRelativeMetadataLists();
     }
