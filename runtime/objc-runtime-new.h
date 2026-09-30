@@ -1095,23 +1095,22 @@ struct relative_list_list_t {
             ((const uint8_t *)entries + index * entsize);
     }
 
-    uint32_t loadedCount() const {
-        uint32_t result = 0;
-        if (entsize < sizeof(relative_list_entry_t<List>)) return 0;
-        for (uint32_t i = 0; i != count; ++i) {
-            if (relativeMetadataImageIsLoaded(entry(i).imageIndex())) ++result;
-        }
-        return result;
+    // Metadata table shape is immutable. Reserve for every entry, then capture
+    // membership exactly once per entry; the returned count describes only
+    // initialized output slots even if loader membership changes during capture.
+    uint32_t listCapacity() const {
+        return entsize < sizeof(relative_list_entry_t<List>) ? 0 : count;
     }
 
-    void copyLoadedLists(List **result) const {
-        if (entsize < sizeof(relative_list_entry_t<List>)) return;
-        for (uint32_t i = 0; i != count; ++i) {
+    uint32_t copyLoadedLists(List **result) const {
+        uint32_t copied = 0;
+        for (uint32_t i = 0; i != listCapacity(); ++i) {
             const auto &candidate = entry(i);
             if (relativeMetadataImageIsLoaded(candidate.imageIndex())) {
-                *result++ = candidate.list();
+                result[copied++] = candidate.list();
             }
         }
+        return copied;
     }
 
 };
@@ -1205,27 +1204,27 @@ struct class_ro_t {
         return baseMethodList != nullptr;
     }
 
-    uint32_t baseMethodListCount() const {
+    uint32_t baseMethodListCapacity() const {
 #if defined(DARLING)
         if ((uintptr_t)baseMethodList & 1) {
             auto lists = (const relative_list_list_t<method_list_t> *)
                 ((uintptr_t)baseMethodList & ~(uintptr_t)3);
-            return lists->loadedCount();
+            return lists->listCapacity();
         }
 #endif
         return baseMethods() ? 1 : 0;
     }
 
-    void copyBaseMethodLists(method_list_t **result) const {
+    uint32_t copyBaseMethodLists(method_list_t **result) const {
 #if defined(DARLING)
         if ((uintptr_t)baseMethodList & 1) {
             auto lists = (const relative_list_list_t<method_list_t> *)
                 ((uintptr_t)baseMethodList & ~(uintptr_t)3);
-            lists->copyLoadedLists(result);
-            return;
+            return lists->copyLoadedLists(result);
         }
 #endif
-        if (auto list = baseMethods()) result[0] = list;
+        if (auto list = baseMethods()) { result[0] = list; return 1; }
+        return 0;
     }
 
 #if defined(DARLING)
@@ -1234,42 +1233,46 @@ struct class_ro_t {
                  (uintptr_t)baseProtocols) & 1) != 0;
     }
 
-    uint32_t basePropertyListCount() const {
+    uint32_t basePropertyListCapacity() const {
         if ((uintptr_t)baseProperties & 1) {
             auto lists = (const relative_list_list_t<property_list_t> *)
                 ((uintptr_t)baseProperties & ~(uintptr_t)3);
-            return lists->loadedCount();
+            return lists->listCapacity();
         }
         return baseProperties ? 1 : 0;
     }
 
-    void copyBasePropertyLists(property_list_t **result) const {
+    uint32_t copyBasePropertyLists(property_list_t **result) const {
         if ((uintptr_t)baseProperties & 1) {
             auto lists = (const relative_list_list_t<property_list_t> *)
                 ((uintptr_t)baseProperties & ~(uintptr_t)3);
-            lists->copyLoadedLists(result);
+            return lists->copyLoadedLists(result);
         } else if (baseProperties) {
             result[0] = baseProperties;
+            return 1;
         }
+        return 0;
     }
 
-    uint32_t baseProtocolListCount() const {
+    uint32_t baseProtocolListCapacity() const {
         if ((uintptr_t)baseProtocols & 1) {
             auto lists = (const relative_list_list_t<protocol_list_t> *)
                 ((uintptr_t)baseProtocols & ~(uintptr_t)3);
-            return lists->loadedCount();
+            return lists->listCapacity();
         }
         return baseProtocols ? 1 : 0;
     }
 
-    void copyBaseProtocolLists(protocol_list_t **result) const {
+    uint32_t copyBaseProtocolLists(protocol_list_t **result) const {
         if ((uintptr_t)baseProtocols & 1) {
             auto lists = (const relative_list_list_t<protocol_list_t> *)
                 ((uintptr_t)baseProtocols & ~(uintptr_t)3);
-            lists->copyLoadedLists(result);
+            return lists->copyLoadedLists(result);
         } else if (baseProtocols) {
             result[0] = baseProtocols;
+            return 1;
         }
+        return 0;
     }
 #endif
 

@@ -1354,10 +1354,10 @@ class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
 
     rwe->version = (ro->flags & RO_META) ? 7 : 0;
 
-    uint32_t methodListCount = ro->baseMethodListCount();
+    uint32_t methodListCount = ro->baseMethodListCapacity();
     if (methodListCount) {
         method_list_t **lists = (method_list_t **)malloc(sizeof(*lists) * methodListCount);
-        ro->copyBaseMethodLists(lists);
+        methodListCount = ro->copyBaseMethodLists(lists);
         if (deepCopy) {
             for (uint32_t i = 0; i != methodListCount; ++i)
                 lists[i] = lists[i]->duplicate();
@@ -1373,14 +1373,14 @@ class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
     // This is probably wrong and ought to be fixed some day
     uint32_t propertyListCount =
 #if defined(DARLING)
-        ro->basePropertyListCount();
+        ro->basePropertyListCapacity();
 #else
         ro->baseProperties ? 1 : 0;
 #endif
     if (propertyListCount) {
         property_list_t **lists = (property_list_t **)malloc(sizeof(*lists) * propertyListCount);
 #if defined(DARLING)
-        ro->copyBasePropertyLists(lists);
+        propertyListCount = ro->copyBasePropertyLists(lists);
 #else
         lists[0] = ro->baseProperties;
 #endif
@@ -1390,14 +1390,14 @@ class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
 
     uint32_t protocolListCount =
 #if defined(DARLING)
-        ro->baseProtocolListCount();
+        ro->baseProtocolListCapacity();
 #else
         ro->baseProtocols ? 1 : 0;
 #endif
     if (protocolListCount) {
         protocol_list_t **lists = (protocol_list_t **)malloc(sizeof(*lists) * protocolListCount);
 #if defined(DARLING)
-        ro->copyBaseProtocolLists(lists);
+        protocolListCount = ro->copyBaseProtocolLists(lists);
 #else
         lists[0] = ro->baseProtocols;
 #endif
@@ -1532,10 +1532,10 @@ static void methodizeClass(Class cls, Class previously)
     }
 
     // Install methods and properties that the class implements itself.
-    uint32_t baseListCount = ro->baseMethodListCount();
+    uint32_t baseListCount = ro->baseMethodListCapacity();
     if (baseListCount) {
         method_list_t **lists = (method_list_t **)malloc(sizeof(*lists) * baseListCount);
-        ro->copyBaseMethodLists(lists);
+        baseListCount = ro->copyBaseMethodLists(lists);
         prepareMethodLists(cls, lists, baseListCount, YES, isBundleClass(cls), nullptr);
         if (rwe
 #if defined(DARLING)
@@ -1631,13 +1631,13 @@ static bool refreshRelativeMetadataListsForClass(Class cls)
     bool changed = false;
     auto rwe = rw->extAllocIfNeeded();
 
-    uint32_t methodCount = sourceRO->baseMethodListCount();
+    uint32_t methodCount = sourceRO->baseMethodListCapacity();
     if (methodCount) {
             method_list_t **loaded = (method_list_t **)
                 malloc(sizeof(*loaded) * methodCount);
             method_list_t **missing = (method_list_t **)
                 malloc(sizeof(*missing) * methodCount);
-            sourceRO->copyBaseMethodLists(loaded);
+            methodCount = sourceRO->copyBaseMethodLists(loaded);
             uint32_t missingCount = 0;
             for (uint32_t i = 0; i != methodCount; ++i) {
                 if (!rwe->methods.containsList(loaded[i]))
@@ -1660,13 +1660,13 @@ static bool refreshRelativeMetadataListsForClass(Class cls)
             free(loaded);
     }
 
-    uint32_t propertyCount = sourceRO->basePropertyListCount();
+    uint32_t propertyCount = sourceRO->basePropertyListCapacity();
     if (propertyCount) {
             property_list_t **loaded = (property_list_t **)
                 malloc(sizeof(*loaded) * propertyCount);
             property_list_t **missing = (property_list_t **)
                 malloc(sizeof(*missing) * propertyCount);
-            sourceRO->copyBasePropertyLists(loaded);
+            propertyCount = sourceRO->copyBasePropertyLists(loaded);
             uint32_t missingCount = 0;
             for (uint32_t i = 0; i != propertyCount; ++i) {
                 if (!rwe->properties.containsList(loaded[i]))
@@ -1680,13 +1680,13 @@ static bool refreshRelativeMetadataListsForClass(Class cls)
             free(loaded);
     }
 
-    uint32_t protocolCount = sourceRO->baseProtocolListCount();
+    uint32_t protocolCount = sourceRO->baseProtocolListCapacity();
     if (protocolCount) {
             protocol_list_t **loaded = (protocol_list_t **)
                 malloc(sizeof(*loaded) * protocolCount);
             protocol_list_t **missing = (protocol_list_t **)
                 malloc(sizeof(*missing) * protocolCount);
-            sourceRO->copyBaseProtocolLists(loaded);
+            protocolCount = sourceRO->copyBaseProtocolLists(loaded);
             uint32_t missingCount = 0;
             for (uint32_t i = 0; i != protocolCount; ++i) {
                 if (!rwe->protocols.containsList(loaded[i]))
