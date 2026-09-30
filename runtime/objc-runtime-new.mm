@@ -1647,6 +1647,13 @@ static bool refreshRelativeMetadataListsForClass(Class cls)
                 prepareMethodLists(cls, missing, missingCount, NO,
                                    isBundleClass(cls), nullptr);
                 rwe->methods.attachLists(missing, missingCount);
+                // These classes are already realized: an earlier lookup may
+                // have cached the replaced method (including in subclasses).
+                // Match attachCategories(ATTACH_EXISTING); prepareMethodLists
+                // handles constant optimized caches separately.
+                flushCaches(cls, __func__, [](Class c){
+                    return !c->cache.isConstantOptimizedCache();
+                });
                 changed = true;
             }
             free(missing);
