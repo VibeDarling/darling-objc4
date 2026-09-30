@@ -890,7 +890,27 @@ void cache_t::insert(SEL sel, IMP imp, id receiver)
         }
     } while (fastpath((i = cache_next(i, m)) != begin));
 
-    bad_cache(receiver, (SEL)sel);
+    // DARLING: Fallback rather than fatal bad_cache abort. If MAX_CACHE_SIZE is reached,
+    // silently returning prevents crashing, though subsequent dispatches will do a full method lookup.
+    capacity = capacity ? capacity * 2 : INIT_CACHE_SIZE;
+    if (capacity <= MAX_CACHE_SIZE) {
+        reallocate(oldCapacity, capacity, true);
+        b = buckets();
+        m = capacity - 1;
+        begin = cache_hash(sel, m);
+        i = begin;
+        do {
+            if (fastpath(b[i].sel() == 0)) {
+                incrementOccupied();
+                b[i].set<Atomic, Encoded>(b, sel, imp, cls());
+                return;
+            }
+            if (b[i].sel() == sel) {
+                return;
+            }
+        } while (fastpath((i = cache_next(i, m)) != begin));
+    }
+    return;
 #endif // !DEBUG_TASK_THREADS
 }
 
