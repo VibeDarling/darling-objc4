@@ -578,6 +578,7 @@ extern bool didCallDyldNotifyRegister;
 /* selectors */
 extern void sel_init(size_t selrefCount);
 extern SEL sel_registerNameNoLock(const char *str, bool copy);
+extern void sel_registerNameFromSharedCacheNoLock(const char *str);
 
 extern SEL SEL_cxx_construct;
 extern SEL SEL_cxx_destruct;
@@ -1217,4 +1218,3 @@ static uint32_t ptr_hash(uint32_t key)
 #include "objc-object.h"
 
 #endif /* _OBJC_PRIVATE_H_ */
-

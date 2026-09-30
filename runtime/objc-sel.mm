@@ -29,6 +29,19 @@
 static objc::ExplicitInitDenseSet<const char *> namedSelectors;
 static SEL search_builtins(const char *key);
 
+#if defined(DARLING)
+uintptr_t sharedCacheRelativeMethodBase()
+{
+#if SUPPORT_PREOPT
+    // Modern caches encode small-method selector offsets from this selector.
+    // Its absence identifies older caches whose offsets remain field-relative.
+    return (uintptr_t)_dyld_get_objc_selector("\xF0\x9F\xA4\xAF");
+#else
+    return 0;
+#endif
+}
+#endif
+
 
 /***********************************************************************
 * sel_init
@@ -129,6 +142,18 @@ SEL sel_registerName(const char *name) {
 
 SEL sel_registerNameNoLock(const char *name, bool copy) {
     return __sel_registerName(name, 0, copy);  // NO lock, maybe copy
+}
+
+void sel_registerNameFromSharedCacheNoLock(const char *name) {
+    selLock.assertLocked();
+    auto& selectors = namedSelectors.get();
+    auto it = selectors.find(name);
+    if (it != selectors.end()) {
+        if (*it == name) return;
+        selectors.erase(it);
+    }
+    auto inserted = selectors.insert(name);
+    *inserted.first = name;
 }
 
 

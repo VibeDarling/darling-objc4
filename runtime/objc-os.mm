@@ -468,6 +468,17 @@ map_images_nolock(unsigned mhCount, const char * const mhPaths[],
     if (firstTime) {
         preopt_init();
     }
+#if defined(DARLING)
+    // vchroot can initialize libobjc before an opt-in private cache is mapped.
+    // Refresh the range when dyld later reports the complete split cache.
+    size_t sharedCacheLength = 0;
+    uintptr_t sharedCacheStart = (uintptr_t)_dyld_get_shared_cache_range(&sharedCacheLength);
+    if (sharedCacheStart && sharedCacheLength &&
+        !objc::dataSegmentsRanges.inSharedCache(sharedCacheStart + sharedCacheLength - 1)) {
+        objc::dataSegmentsRanges.setSharedCacheRange(sharedCacheStart,
+                                                     sharedCacheStart + sharedCacheLength);
+    }
+#endif
 
     if (PrintImages) {
         _objc_inform("IMAGES: processing %u newly-mapped images...\n", mhCount);
@@ -597,6 +608,9 @@ map_images_nolock(unsigned mhCount, const char * const mhPaths[],
     if (hCount > 0) {
         _read_images(hList, hCount, totalClasses, unoptimizedTotalClasses);
     }
+#if defined(DARLING) && __OBJC2__
+    refreshRelativeMetadataLists();
+#endif
 
     firstTime = NO;
     

@@ -209,8 +209,10 @@ isa_t::setClass(Class newCls, UNUSED_WITHOUT_PTRAUTH objc_object *obj)
     // Setting an indexed class is handled separately.
     cls = newCls;
 
-#else // Nonpointer isa, no ptrauth
+#elif SUPPORT_PACKED_ISA // Nonpointer isa, no ptrauth
     shiftcls = (uintptr_t)newCls >> 3;
+#else
+    cls = newCls;
 #endif
 }
 
@@ -230,7 +232,9 @@ isa_t::setClass(Class newCls, UNUSED_WITHOUT_PTRAUTH objc_object *obj)
 
 inline Class
 isa_t::getClass(MAYBE_UNUSED_AUTHENTICATED_PARAM bool authenticated) {
-#if SUPPORT_INDEXED_ISA
+#if !SUPPORT_NONPOINTER_ISA
+    return cls;
+#elif SUPPORT_INDEXED_ISA
     return cls;
 #else
 

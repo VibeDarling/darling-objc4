@@ -312,6 +312,11 @@ bool method_list_t::isUniqued() const {
 }
 
 bool method_list_t::isFixedUp() const {
+#if defined(DARLING)
+    // Shared-cache method lists are preoptimized and immutable. Newer caches
+    // may use flag encodings this older runtime does not recognize.
+    if (objc::inSharedCache((uintptr_t)this)) return true;
+#endif
     // Ignore any flags in the top bits, just look at the bottom two.
     return (flags() & 0x3) == fixed_up_method_list;
 }
@@ -348,7 +353,7 @@ const method_list_t_authed_ptr<method_list_t> *method_array_t::endCategoryMethod
     auto mlists = beginLists();
     auto mlistsEnd = endLists();
 
-    if (mlists == mlistsEnd  ||  !cls->data()->ro()->baseMethods())
+    if (mlists == mlistsEnd  ||  !cls->data()->ro()->hasBaseMethods())
     {
         // No methods, or no base methods. 
         // Everything here is a category method.
@@ -1349,10 +1354,16 @@ class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
 
     rwe->version = (ro->flags & RO_META) ? 7 : 0;
 
-    method_list_t *list = ro->baseMethods();
-    if (list) {
-        if (deepCopy) list = list->duplicate();
-        rwe->methods.attachLists(&list, 1);
+    uint32_t methodListCount = ro->baseMethodListCapacity();
+    if (methodListCount) {
+        method_list_t **lists = (method_list_t **)malloc(sizeof(*lists) * methodListCount);
+        methodListCount = ro->copyBaseMethodLists(lists);
+        if (deepCopy) {
+            for (uint32_t i = 0; i != methodListCount; ++i)
+                lists[i] = lists[i]->duplicate();
+        }
+        rwe->methods.attachLists(lists, methodListCount);
+        free(lists);
     }
 
     // See comments in objc_duplicateClass
@@ -1360,14 +1371,38 @@ class_rw_t::extAlloc(const class_ro_t *ro, bool deepCopy)
     // have not been deep-copied
     //
     // This is probably wrong and ought to be fixed some day
-    property_list_t *proplist = ro->baseProperties;
-    if (proplist) {
-        rwe->properties.attachLists(&proplist, 1);
+    uint32_t propertyListCount =
+#if defined(DARLING)
+        ro->basePropertyListCapacity();
+#else
+        ro->baseProperties ? 1 : 0;
+#endif
+    if (propertyListCount) {
+        property_list_t **lists = (property_list_t **)malloc(sizeof(*lists) * propertyListCount);
+#if defined(DARLING)
+        propertyListCount = ro->copyBasePropertyLists(lists);
+#else
+        lists[0] = ro->baseProperties;
+#endif
+        rwe->properties.attachLists(lists, propertyListCount);
+        free(lists);
     }
 
-    protocol_list_t *protolist = ro->baseProtocols;
-    if (protolist) {
-        rwe->protocols.attachLists(&protolist, 1);
+    uint32_t protocolListCount =
+#if defined(DARLING)
+        ro->baseProtocolListCapacity();
+#else
+        ro->baseProtocols ? 1 : 0;
+#endif
+    if (protocolListCount) {
+        protocol_list_t **lists = (protocol_list_t **)malloc(sizeof(*lists) * protocolListCount);
+#if defined(DARLING)
+        protocolListCount = ro->copyBaseProtocolLists(lists);
+#else
+        lists[0] = ro->baseProtocols;
+#endif
+        rwe->protocols.attachLists(lists, protocolListCount);
+        free(lists);
     }
 
     set_ro_or_rwe(rwe, ro);
@@ -1479,6 +1514,16 @@ static void methodizeClass(Class cls, Class previously)
     auto rw = cls->data();
     auto ro = rw->ro();
     auto rwe = rw->ext();
+#if defined(DARLING)
+    bool baseListsAlreadyAttached = false;
+    if (rwe && objc::inSharedCache((uintptr_t)ro)) {
+        rwe = rw->replaceCachedExt(ro);
+        baseListsAlreadyAttached = true;
+    } else if (!rwe && ro->hasRelativeMetadataLists()) {
+        rwe = rw->extAllocIfNeeded();
+        baseListsAlreadyAttached = true;
+    }
+#endif
 
     // Methodizing for the first time
     if (PrintConnecting) {
@@ -1487,19 +1532,34 @@ static void methodizeClass(Class cls, Class previously)
     }
 
     // Install methods and properties that the class implements itself.
-    method_list_t *list = ro->baseMethods();
-    if (list) {
-        prepareMethodLists(cls, &list, 1, YES, isBundleClass(cls), nullptr);
-        if (rwe) rwe->methods.attachLists(&list, 1);
+    uint32_t baseListCount = ro->baseMethodListCapacity();
+    if (baseListCount) {
+        method_list_t **lists = (method_list_t **)malloc(sizeof(*lists) * baseListCount);
+        baseListCount = ro->copyBaseMethodLists(lists);
+        prepareMethodLists(cls, lists, baseListCount, YES, isBundleClass(cls), nullptr);
+        if (rwe
+#if defined(DARLING)
+            && !baseListsAlreadyAttached
+#endif
+        ) rwe->methods.attachLists(lists, baseListCount);
+        free(lists);
     }
 
     property_list_t *proplist = ro->baseProperties;
-    if (rwe && proplist) {
+    if (rwe && proplist
+#if defined(DARLING)
+        && !baseListsAlreadyAttached
+#endif
+    ) {
         rwe->properties.attachLists(&proplist, 1);
     }
 
     protocol_list_t *protolist = ro->baseProtocols;
-    if (rwe && protolist) {
+    if (rwe && protolist
+#if defined(DARLING)
+        && !baseListsAlreadyAttached
+#endif
+    ) {
         rwe->protocols.attachLists(&protolist, 1);
     }
 
@@ -1528,15 +1588,208 @@ static void methodizeClass(Class cls, Class previously)
 
 #if DEBUG
     // Debug: sanity-check all SELs; log method list contents
-    for (const auto& meth : rw->methods()) {
-        if (PrintConnecting) {
-            _objc_inform("METHOD %c[%s %s]", isMeta ? '+' : '-', 
-                         cls->nameForLogging(), sel_getName(meth.name()));
+    if (!objc::inSharedCache((uintptr_t)ro)) {
+        for (const auto& meth : rw->methods()) {
+            if (PrintConnecting) {
+                _objc_inform("METHOD %c[%s %s]", isMeta ? '+' : '-',
+                             cls->nameForLogging(), sel_getName(meth.name()));
+            }
+            ASSERT(sel_registerName(sel_getName(meth.name())) == meth.name());
         }
-        ASSERT(sel_registerName(sel_getName(meth.name())) == meth.name());
     }
 #endif
 }
+
+#if defined(DARLING)
+static Class testRelativeClass;
+static const class_ro_t *testRelativeRO;
+bool darling_test_relative_image_loaded;
+static const class_ro_t *relativeMetadataSourceForClass(Class cls)
+{
+    if (cls == testRelativeClass) return testRelativeRO;
+    const class_ro_t *ro = cls->data()->ro();
+    if (objc::inSharedCache((uintptr_t)ro)) return ro;
+
+    __block const class_ro_t *result = nullptr;
+    _dyld_for_each_objc_class(cls->nameForLogging(),
+        ^(void *classPtr, bool, bool *stop) {
+            Class candidate = (Class)classPtr;
+            if (cls->isMetaClass()) candidate = candidate->ISA();
+            if (!candidate) return;
+            const class_ro_t *candidateRO = candidate->bits.safe_ro();
+            if (objc::inSharedCache((uintptr_t)candidateRO) &&
+                candidateRO->hasRelativeMetadataLists()) {
+                result = candidateRO;
+                *stop = true;
+            }
+        });
+    return result;
+}
+
+static bool refreshRelativeMetadataListsForClass(Class cls)
+{
+    auto rw = cls->data();
+    auto sourceRO = relativeMetadataSourceForClass(cls);
+    if (!sourceRO || !sourceRO->hasRelativeMetadataLists()) return false;
+
+    bool changed = false;
+    auto rwe = rw->extAllocIfNeeded();
+
+    uint32_t methodCount = sourceRO->baseMethodListCapacity();
+    if (methodCount) {
+            method_list_t **loaded = (method_list_t **)
+                malloc(sizeof(*loaded) * methodCount);
+            method_list_t **missing = (method_list_t **)
+                malloc(sizeof(*missing) * methodCount);
+            methodCount = sourceRO->copyBaseMethodLists(loaded);
+            uint32_t missingCount = 0;
+            for (uint32_t i = 0; i != methodCount; ++i) {
+                if (!rwe->methods.containsList(loaded[i]))
+                    missing[missingCount++] = loaded[i];
+            }
+            if (missingCount) {
+                prepareMethodLists(cls, missing, missingCount, NO,
+                                   isBundleClass(cls), nullptr);
+                rwe->methods.attachLists(missing, missingCount);
+                // These classes are already realized: an earlier lookup may
+                // have cached the replaced method (including in subclasses).
+                // Match attachCategories(ATTACH_EXISTING); prepareMethodLists
+                // handles constant optimized caches separately.
+                flushCaches(cls, __func__, [](Class c){
+                    return !c->cache.isConstantOptimizedCache();
+                });
+                changed = true;
+            }
+            free(missing);
+            free(loaded);
+    }
+
+    uint32_t propertyCount = sourceRO->basePropertyListCapacity();
+    if (propertyCount) {
+            property_list_t **loaded = (property_list_t **)
+                malloc(sizeof(*loaded) * propertyCount);
+            property_list_t **missing = (property_list_t **)
+                malloc(sizeof(*missing) * propertyCount);
+            propertyCount = sourceRO->copyBasePropertyLists(loaded);
+            uint32_t missingCount = 0;
+            for (uint32_t i = 0; i != propertyCount; ++i) {
+                if (!rwe->properties.containsList(loaded[i]))
+                    missing[missingCount++] = loaded[i];
+            }
+            if (missingCount) {
+                rwe->properties.attachLists(missing, missingCount);
+                changed = true;
+            }
+            free(missing);
+            free(loaded);
+    }
+
+    uint32_t protocolCount = sourceRO->baseProtocolListCapacity();
+    if (protocolCount) {
+            protocol_list_t **loaded = (protocol_list_t **)
+                malloc(sizeof(*loaded) * protocolCount);
+            protocol_list_t **missing = (protocol_list_t **)
+                malloc(sizeof(*missing) * protocolCount);
+            protocolCount = sourceRO->copyBaseProtocolLists(loaded);
+            uint32_t missingCount = 0;
+            for (uint32_t i = 0; i != protocolCount; ++i) {
+                if (!rwe->protocols.containsList(loaded[i]))
+                    missing[missingCount++] = loaded[i];
+            }
+            if (missingCount) {
+                rwe->protocols.attachLists(missing, missingCount);
+                changed = true;
+            }
+            free(missing);
+            free(loaded);
+    }
+
+    return changed;
+}
+
+void refreshRelativeMetadataLists()
+{
+    runtimeLock.assertLocked();
+
+    foreach_realized_class_and_metaclass(^(Class cls) {
+        refreshRelativeMetadataListsForClass(cls);
+        return true;
+    });
+}
+
+// Validation only: copied production attachment block, not cache-list discovery.
+extern "C" __attribute__((visibility("default")))
+void darling_test_attach_method(Class cls, SEL name, IMP imp, bool invalidate)
+{
+    mutex_locker_t lock(runtimeLock);
+    auto rwe = cls->data()->extAllocIfNeeded();
+    auto list = (method_list_t *)calloc(method_list_t::byteSize(method_t::bigSize, 1), 1);
+    list->entsizeAndFlags = (uint32_t)sizeof(struct method_t::big) | fixed_up_method_list;
+    list->count = 1;
+    auto &first = list->begin()->big();
+    first.name = name;
+    first.types = "Q@:";
+    first.imp = imp;
+    method_list_t *missing[] = {list};
+    uint32_t missingCount = 1;
+    bool changed = false;
+    prepareMethodLists(cls, missing, missingCount, NO,
+                                   isBundleClass(cls), nullptr);
+                rwe->methods.attachLists(missing, missingCount);
+                // These classes are already realized: an earlier lookup may
+                // have cached the replaced method (including in subclasses).
+                // Match attachCategories(ATTACH_EXISTING); prepareMethodLists
+                // handles constant optimized caches separately.
+                if (invalidate) flushCaches(cls, __func__, [](Class c){
+                    return !c->cache.isConstantOptimizedCache();
+                });
+                changed = true;
+}
+
+extern "C" __attribute__((visibility("default")))
+unsigned darling_test_refresh_method(Class cls, SEL name, IMP imp)
+{
+    mutex_locker_t lock(runtimeLock);
+    auto list = (method_list_t *)calloc(method_list_t::byteSize(method_t::bigSize, 1), 1);
+    list->entsizeAndFlags = (uint32_t)sizeof(struct method_t::big) | fixed_up_method_list;
+    list->count = 1;
+    auto &first = list->begin()->big();
+    first.name = name;
+    first.types = "Q@:";
+    first.imp = imp;
+    auto table = (relative_list_list_t<method_list_t> *)calloc(1, 16);
+    table->entsize = 8;
+    table->count = 1;
+    intptr_t offset = (intptr_t)list - (intptr_t)&table->entries[0];
+    ASSERT(offset >= -(1LL<<47) && offset < (1LL<<47));
+    table->entries[0].raw = ((uint64_t)offset << 16) | 65535;
+    auto ro = (class_ro_t *)calloc(1, sizeof(class_ro_t));
+    memcpy(ro, cls->data()->ro(), sizeof(class_ro_t));
+    ro->baseMethodList = (void *)((uintptr_t)table | 1);
+    ro->baseProperties = nullptr;
+    ro->baseProtocols = nullptr;
+    testRelativeClass = cls;
+    testRelativeRO = ro;
+    darling_test_relative_image_loaded = false;
+    unsigned result = refreshRelativeMetadataListsForClass(cls) ? 1 : 0;
+    darling_test_relative_image_loaded = true;
+    if (refreshRelativeMetadataListsForClass(cls)) result |= 2;
+    if (refreshRelativeMetadataListsForClass(cls)) result |= 4;
+    testRelativeClass = Nil;
+    testRelativeRO = nullptr;
+    darling_test_relative_image_loaded = false;
+    free(ro);
+    free(table);
+    // The attached method list remains owned by the runtime.
+    return result;
+}
+
+void refreshRelativeMetadataListsFromFallback()
+{
+    mutex_locker_t lock(runtimeLock);
+    refreshRelativeMetadataLists();
+}
+#endif
 
 
 /***********************************************************************
@@ -3218,6 +3471,13 @@ load_images(const char *path __unused, const struct mach_header *mh)
         loadAllCategories();
     }
 
+#if defined(DARLING)
+    {
+        mutex_locker_t lock(runtimeLock);
+        refreshRelativeMetadataLists();
+    }
+#endif
+
     // Return without taking locks if there are no +load methods here.
     if (!hasLoadMethods((const headerType *)mh)) return;
 
@@ -3595,6 +3855,27 @@ void _read_images(header_info **hList, uint32_t hCount, int totalClasses, int un
     static size_t UnfixedSelectors;
     {
         mutex_locker_t lock(selLock);
+#if defined(DARLING)
+        size_t cachedSelectorSections = 0;
+        for (EACH_HEADER) {
+            SEL *sels = _getObjc2SelectorRefs(hi, &count);
+            if (!objc::inSharedCache((uintptr_t)sels)) continue;
+            cachedSelectorSections++;
+            for (i = 0; i < count; i++) {
+                sel_registerNameFromSharedCacheNoLock(sel_cname(sels[i]));
+            }
+        }
+        if (cachedSelectorSections != 0) {
+            for (header_info *loaded = FirstHeader; loaded != nil; loaded = loaded->getNext()) {
+                SEL *sels = _getObjc2SelectorRefs(loaded, &count);
+                if (objc::inSharedCache((uintptr_t)sels)) continue;
+                for (i = 0; i < count; i++) {
+                    SEL sel = sel_registerNameNoLock(sel_cname(sels[i]), loaded->isBundle());
+                    if (sels[i] != sel) sels[i] = sel;
+                }
+            }
+        }
+#endif
         for (EACH_HEADER) {
             if (hi->hasPreoptimizedSelectors()) continue;
 
@@ -8006,16 +8287,23 @@ _class_createInstanceFromZone(Class cls, size_t extraBytes, void *zone,
     return object_cxxConstructFromClass(obj, cls, construct_flags);
 }
 
+static Class realizeClassForAllocation(Class cls)
+{
+    if (slowpath(!cls->isRealized())) {
+        runtimeLock.lock();
+        if (!cls->isRealized()) {
+            cls = realizeClassMaybeSwiftAndLeaveLocked(cls, runtimeLock);
+        }
+        runtimeLock.unlock();
+    }
+    return cls;
+}
+
 id
 class_createInstance(Class cls, size_t extraBytes)
 {
     if (!cls) return nil;
-    if (slowpath(!cls->isRealized())) {
-        mutex_locker_t lock(runtimeLock);
-        if (!cls->isRealized()) {
-            cls = realizeClassMaybeSwiftAndLeaveLocked(cls, runtimeLock);
-        }
-    }
+    cls = realizeClassForAllocation(cls);
     return _class_createInstanceFromZone(cls, extraBytes, nil);
 }
 
@@ -8024,6 +8312,7 @@ id
 _objc_rootAllocWithZone(Class cls, malloc_zone_t *zone __unused)
 {
     // allocWithZone under __OBJC2__ ignores the zone parameter
+    cls = realizeClassForAllocation(cls);
     return _class_createInstanceFromZone(cls, 0, nil,
                                          OBJECT_CONSTRUCT_CALL_BADALLOC);
 }
@@ -8057,6 +8346,7 @@ _object_copyFromZone(id oldObj, size_t extraBytes, void *zone)
     // fixme this doesn't handle C++ ivars correctly (#4619414)
 
     Class cls = oldObj->ISA(/*authenticated*/true);
+    cls = realizeClassForAllocation(cls);
     size_t size;
     id obj = _class_createInstanceFromZone(cls, extraBytes, zone,
                                            OBJECT_CONSTRUCT_NONE, false, &size);

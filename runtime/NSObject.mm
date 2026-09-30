@@ -1740,7 +1740,9 @@ objc_object::sidetable_isWeaklyReferenced()
 //Clients can dlsym() for this symbol to see if an ObjC supporting
 //-_setWeaklyReferenced is present
 OBJC_EXPORT const uintptr_t _objc_has_weak_formation_callout = 0;
+#if !(defined(DARLING) && defined(__arm64__))
 static_assert(SUPPORT_NONPOINTER_ISA, "Weak formation callout must only be defined when nonpointer isa is supported.");
+#endif
 #else
 static_assert(!SUPPORT_NONPOINTER_ISA, "If weak callout is not present then we must not support nonpointer isas.");
 #endif
@@ -2452,18 +2454,42 @@ NONLAZY_CLASS_LOAD
 
 // Replaced by CF (returns an NSMethodSignature)
 + (NSMethodSignature *)instanceMethodSignatureForSelector:(SEL)sel {
+#if defined(DARLING) && __OBJC2__
+    Class cls = object_getClass(self);
+    IMP before = class_getMethodImplementation(cls, _cmd);
+    refreshRelativeMetadataListsFromFallback();
+    IMP after = class_getMethodImplementation(cls, _cmd);
+    if (after != before)
+        return ((NSMethodSignature *(*)(id, SEL, SEL))after)(self, _cmd, sel);
+#endif
     _objc_fatal("+[NSObject instanceMethodSignatureForSelector:] "
                 "not available without CoreFoundation");
 }
 
 // Replaced by CF (returns an NSMethodSignature)
 + (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
+#if defined(DARLING) && __OBJC2__
+    Class cls = object_getClass(self);
+    IMP before = class_getMethodImplementation(cls, _cmd);
+    refreshRelativeMetadataListsFromFallback();
+    IMP after = class_getMethodImplementation(cls, _cmd);
+    if (after != before)
+        return ((NSMethodSignature *(*)(id, SEL, SEL))after)(self, _cmd, sel);
+#endif
     _objc_fatal("+[NSObject methodSignatureForSelector:] "
                 "not available without CoreFoundation");
 }
 
 // Replaced by CF (returns an NSMethodSignature)
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
+#if defined(DARLING) && __OBJC2__
+    Class cls = object_getClass(self);
+    IMP before = class_getMethodImplementation(cls, _cmd);
+    refreshRelativeMetadataListsFromFallback();
+    IMP after = class_getMethodImplementation(cls, _cmd);
+    if (after != before)
+        return ((NSMethodSignature *(*)(id, SEL, SEL))after)(self, _cmd, sel);
+#endif
     _objc_fatal("-[NSObject methodSignatureForSelector:] "
                 "not available without CoreFoundation");
 }
@@ -2641,5 +2667,3 @@ NONLAZY_CLASS_LOAD
 }
 
 @end
-
-

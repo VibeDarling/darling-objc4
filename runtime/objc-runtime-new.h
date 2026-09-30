@@ -27,6 +27,12 @@
 #include "PointerUnion.h"
 #include <type_traits>
 
+#if defined(DARLING)
+bool relativeMetadataImageIsLoaded(uint16_t imageIndex);
+void refreshRelativeMetadataLists();
+void refreshRelativeMetadataListsFromFallback();
+#endif
+
 // class_data_bits_t is the class_t->data field (class_rw_t pointer plus flags)
 // The extra bits are optimized for the retain/release and alloc/dealloc paths.
 
@@ -123,7 +129,11 @@
 //   _tryRetain/_isDeallocating/retainWeakReference/allowsWeakReference
 #define FAST_HAS_DEFAULT_RR     (1UL<<2)
 // data pointer
+#if defined(DARLING) && defined(__arm64__)
+#define FAST_DATA_MASK          (~(uintptr_t)7)
+#else
 #define FAST_DATA_MASK          0x00007ffffffffff8UL
+#endif
 
 #if __arm64__
 // class or superclass has .cxx_construct/.cxx_destruct implementation
@@ -574,6 +584,13 @@ struct RelativePointer: nocopy_t {
         uintptr_t pointer = base + signExtendedOffset;
         return (T)pointer;
     }
+
+    T get(uintptr_t base) const {
+        if (offset == 0)
+            return nullptr;
+        uintptr_t signExtendedOffset = (uintptr_t)(intptr_t)offset;
+        return (T)(base + signExtendedOffset);
+    }
 };
 
 
@@ -723,6 +740,10 @@ namespace objc {
 static inline bool inSharedCache(uintptr_t ptr);
 }
 
+#if defined(DARLING)
+extern "C" uintptr_t sharedCacheRelativeMethodBase();
+#endif
+
 struct method_t {
     static const uint32_t smallMethodListFlag = 0x80000000;
 
@@ -790,9 +811,14 @@ public:
 
     SEL name() const {
         if (isSmall()) {
-            return (small().inSharedCache()
-                    ? (SEL)small().name.get()
-                    : *(SEL *)small().name.get());
+            if (small().inSharedCache()) {
+#if defined(DARLING)
+                if (uintptr_t base = sharedCacheRelativeMethodBase())
+                    return (SEL)small().name.get(base);
+#endif
+                return (SEL)small().name.get();
+            }
+            return *(SEL *)small().name.get();
         } else {
             return big().name;
         }
@@ -818,6 +844,10 @@ public:
 
     SEL getSmallNameAsSEL() const {
         ASSERT(small().inSharedCache());
+#if defined(DARLING)
+        if (uintptr_t base = sharedCacheRelativeMethodBase())
+            return (SEL)small().name.get(base);
+#endif
         return (SEL)small().name.get();
     }
 
@@ -1039,6 +1069,53 @@ struct protocol_list_t {
     }
 };
 
+#if defined(DARLING)
+template <typename List>
+struct relative_list_entry_t {
+    uint64_t raw;
+
+    uint16_t imageIndex() const {
+        return raw & 0xffff;
+    }
+
+    List *list() const {
+        intptr_t offset = (intptr_t)((int64_t)raw >> 16);
+        return (List *)((intptr_t)this + offset);
+    }
+};
+
+template <typename List>
+struct relative_list_list_t {
+    uint32_t entsize;
+    uint32_t count;
+    relative_list_entry_t<List> entries[0];
+
+    const relative_list_entry_t<List> &entry(uint32_t index) const {
+        return *(const relative_list_entry_t<List> *)
+            ((const uint8_t *)entries + index * entsize);
+    }
+
+    // Metadata table shape is immutable. Reserve for every entry, then capture
+    // membership exactly once per entry; the returned count describes only
+    // initialized output slots even if loader membership changes during capture.
+    uint32_t listCapacity() const {
+        return entsize < sizeof(relative_list_entry_t<List>) ? 0 : count;
+    }
+
+    uint32_t copyLoadedLists(List **result) const {
+        uint32_t copied = 0;
+        for (uint32_t i = 0; i != listCapacity(); ++i) {
+            const auto &candidate = entry(i);
+            if (relativeMetadataImageIsLoaded(candidate.imageIndex())) {
+                result[copied++] = candidate.list();
+            }
+        }
+        return copied;
+    }
+
+};
+#endif
+
 struct class_ro_t {
     uint32_t flags;
     uint32_t instanceStart;
@@ -1092,6 +1169,9 @@ struct class_ro_t {
 #endif
 
     method_list_t *baseMethods() const {
+#if defined(DARLING)
+        if ((uintptr_t)baseMethodList & 1) return nullptr;
+#endif
 #if __has_feature(ptrauth_calls)
         method_list_t *ptr = ptrauth_strip((method_list_t *)baseMethodList, ptrauth_key_method_list_pointer);
         if (ptr == nullptr)
@@ -1119,6 +1199,82 @@ struct class_ro_t {
         return (method_list_t *)baseMethodList;
 #endif
     }
+
+    bool hasBaseMethods() const {
+        return baseMethodList != nullptr;
+    }
+
+    uint32_t baseMethodListCapacity() const {
+#if defined(DARLING)
+        if ((uintptr_t)baseMethodList & 1) {
+            auto lists = (const relative_list_list_t<method_list_t> *)
+                ((uintptr_t)baseMethodList & ~(uintptr_t)3);
+            return lists->listCapacity();
+        }
+#endif
+        return baseMethods() ? 1 : 0;
+    }
+
+    uint32_t copyBaseMethodLists(method_list_t **result) const {
+#if defined(DARLING)
+        if ((uintptr_t)baseMethodList & 1) {
+            auto lists = (const relative_list_list_t<method_list_t> *)
+                ((uintptr_t)baseMethodList & ~(uintptr_t)3);
+            return lists->copyLoadedLists(result);
+        }
+#endif
+        if (auto list = baseMethods()) { result[0] = list; return 1; }
+        return 0;
+    }
+
+#if defined(DARLING)
+    bool hasRelativeMetadataLists() const {
+        return (((uintptr_t)baseMethodList | (uintptr_t)baseProperties |
+                 (uintptr_t)baseProtocols) & 1) != 0;
+    }
+
+    uint32_t basePropertyListCapacity() const {
+        if ((uintptr_t)baseProperties & 1) {
+            auto lists = (const relative_list_list_t<property_list_t> *)
+                ((uintptr_t)baseProperties & ~(uintptr_t)3);
+            return lists->listCapacity();
+        }
+        return baseProperties ? 1 : 0;
+    }
+
+    uint32_t copyBasePropertyLists(property_list_t **result) const {
+        if ((uintptr_t)baseProperties & 1) {
+            auto lists = (const relative_list_list_t<property_list_t> *)
+                ((uintptr_t)baseProperties & ~(uintptr_t)3);
+            return lists->copyLoadedLists(result);
+        } else if (baseProperties) {
+            result[0] = baseProperties;
+            return 1;
+        }
+        return 0;
+    }
+
+    uint32_t baseProtocolListCapacity() const {
+        if ((uintptr_t)baseProtocols & 1) {
+            auto lists = (const relative_list_list_t<protocol_list_t> *)
+                ((uintptr_t)baseProtocols & ~(uintptr_t)3);
+            return lists->listCapacity();
+        }
+        return baseProtocols ? 1 : 0;
+    }
+
+    uint32_t copyBaseProtocolLists(protocol_list_t **result) const {
+        if ((uintptr_t)baseProtocols & 1) {
+            auto lists = (const relative_list_list_t<protocol_list_t> *)
+                ((uintptr_t)baseProtocols & ~(uintptr_t)3);
+            return lists->copyLoadedLists(result);
+        } else if (baseProtocols) {
+            result[0] = baseProtocols;
+            return 1;
+        }
+        return 0;
+    }
+#endif
 
     uintptr_t baseMethodListPtrauthData() const {
         return ptrauth_blend_discriminator(&baseMethodList,
@@ -1299,6 +1455,20 @@ class list_array_tt {
         }
         return *this;
     }
+
+#if defined(DARLING)
+    bool storageInSharedCache() const {
+        return hasArray() && objc::inSharedCache((uintptr_t)array());
+    }
+
+    bool containsList(List *candidate) const {
+        for (auto cursor = beginLists(), finish = endLists();
+             cursor != finish; ++cursor) {
+            if ((List *)*cursor == candidate) return true;
+        }
+        return false;
+    }
+#endif
 
     uint32_t count() const {
         uint32_t result = 0;
@@ -1532,11 +1702,24 @@ public:
     class_rw_ext_t *extAllocIfNeeded() {
         auto v = get_ro_or_rwe();
         if (fastpath(v.is<class_rw_ext_t *>())) {
-            return v.get<class_rw_ext_t *>(&ro_or_rw_ext);
+            auto rwe = v.get<class_rw_ext_t *>(&ro_or_rw_ext);
+#if defined(DARLING)
+            if (objc::inSharedCache((uintptr_t)rwe) ||
+                rwe->methods.storageInSharedCache()) {
+                return extAlloc(rwe->ro);
+            }
+#endif
+            return rwe;
         } else {
             return extAlloc(v.get<const class_ro_t *>(&ro_or_rw_ext));
         }
     }
+
+#if defined(DARLING)
+    class_rw_ext_t *replaceCachedExt(const class_ro_t *ro) {
+        return extAlloc(ro);
+    }
+#endif
 
     class_rw_ext_t *deepCopy(const class_ro_t *ro) {
         return extAlloc(ro, true);

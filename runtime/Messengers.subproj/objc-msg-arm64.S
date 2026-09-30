@@ -122,7 +122,7 @@ _objc_indexed_classes:
 	ldr	p16, [x10, p16, UXTP #PTRSHIFT]	// load class from array
 1:
 
-#elif __LP64__
+#elif __LP64__ && SUPPORT_PACKED_ISA
 .if \needs_auth == 0 // _cache_getImp takes an authed class already
 	mov	p16, \src
 .else
@@ -130,7 +130,7 @@ _objc_indexed_classes:
 	ExtractISA p16, \src, \auth_address
 .endif
 #else
-	// 32-bit raw isa
+	// Raw isa
 	mov	p16, \src
 
 #endif

@@ -30,6 +30,14 @@
 #include "objc-os.h"
 #include "objc-file.h"
 
+#if defined(DARLING)
+bool relativeMetadataImageIsLoaded(uint16_t imageIndex)
+{
+    extern bool darling_test_relative_image_loaded;
+    if (imageIndex == 65535) return darling_test_relative_image_loaded;
+    return _dyld_is_preoptimized_objc_image_loaded(imageIndex);
+}
+#endif
 
 #if !SUPPORT_PREOPT
 // Preoptimization not supported on this platform.
@@ -97,6 +105,12 @@ header_info_rw *getPreoptimizedHeaderRW(const struct header_info *const hdr)
 
 void preopt_init(void)
 {
+    size_t length;
+    const uintptr_t start = (uintptr_t)_dyld_get_shared_cache_range(&length);
+    if (start) {
+        objc::dataSegmentsRanges.setSharedCacheRange(start, start + length);
+    }
+
     disableSharedCacheOptimizations();
     
     if (PrintPreopt) {
@@ -388,6 +402,13 @@ unsigned int getPreoptimizedClassUnreasonableCount()
 
 Class getPreoptimizedClass(const char *name)
 {
+#if defined(DARLING) && __OBJC2__
+    static bool refreshedRelativeMetadata = false;
+    if (!refreshedRelativeMetadata && _dyld_objc_class_count() != 0) {
+        refreshedRelativeMetadata = true;
+        refreshRelativeMetadataLists();
+    }
+#endif
     objc_clsopt_t *classes = opt ? opt->clsopt() : nil;
     if (!classes) return nil;
 

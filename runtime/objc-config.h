@@ -91,7 +91,7 @@
 
 // Define SUPPORT_PACKED_ISA=1 on platforms that store the class in the isa 
 // field as a maskable pointer with other data around it.
-#if (!__LP64__  ||  TARGET_OS_WIN32  ||  \
+#if (defined(DARLING) && defined(__arm64__)) || (!__LP64__  ||  TARGET_OS_WIN32  ||  \
      (TARGET_OS_SIMULATOR && !TARGET_OS_MACCATALYST && !__arm64__))
 #   define SUPPORT_PACKED_ISA 0
 #else
