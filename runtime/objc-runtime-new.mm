@@ -1713,6 +1713,35 @@ void refreshRelativeMetadataLists()
     });
 }
 
+// Validation only: copied production attachment block, not cache-list discovery.
+extern "C" __attribute__((visibility("default")))
+void darling_test_attach_method(Class cls, SEL name, IMP imp, bool invalidate)
+{
+    mutex_locker_t lock(runtimeLock);
+    auto rwe = cls->data()->extAllocIfNeeded();
+    auto list = (method_list_t *)calloc(method_list_t::byteSize(method_t::bigSize, 1), 1);
+    list->entsizeAndFlags = (uint32_t)sizeof(struct method_t::big) | fixed_up_method_list;
+    list->count = 1;
+    auto &first = list->begin()->big();
+    first.name = name;
+    first.types = "Q@:";
+    first.imp = imp;
+    method_list_t *missing[] = {list};
+    uint32_t missingCount = 1;
+    bool changed = false;
+    prepareMethodLists(cls, missing, missingCount, NO,
+                                   isBundleClass(cls), nullptr);
+                rwe->methods.attachLists(missing, missingCount);
+                // These classes are already realized: an earlier lookup may
+                // have cached the replaced method (including in subclasses).
+                // Match attachCategories(ATTACH_EXISTING); prepareMethodLists
+                // handles constant optimized caches separately.
+                if (invalidate) flushCaches(cls, __func__, [](Class c){
+                    return !c->cache.isConstantOptimizedCache();
+                });
+                changed = true;
+}
+
 void refreshRelativeMetadataListsFromFallback()
 {
     mutex_locker_t lock(runtimeLock);
