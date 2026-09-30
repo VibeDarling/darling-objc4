@@ -18,7 +18,7 @@ int main(void)
     SEL selector = sel_registerName("relativeRefreshValue");
     id object = [[cls alloc] init];
     unsigned long (*send)(id, SEL) = (void *)objc_msgSend;
-    assert(send(object, selector) != 22);
+    assert(class_getInstanceMethod(cls, selector) == 0);
 
     // The validation hook runs the production refresh path three times:
     // unloaded (no attach), loaded (one attach), then already attached.
