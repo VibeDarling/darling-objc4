@@ -33,6 +33,8 @@
 #if defined(DARLING)
 bool relativeMetadataImageIsLoaded(uint16_t imageIndex)
 {
+    extern bool darling_test_relative_image_loaded;
+    if (imageIndex == 65535) return darling_test_relative_image_loaded;
     return _dyld_is_preoptimized_objc_image_loaded(imageIndex);
 }
 #endif

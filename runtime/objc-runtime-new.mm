@@ -1601,8 +1601,12 @@ static void methodizeClass(Class cls, Class previously)
 }
 
 #if defined(DARLING)
+static Class testRelativeClass;
+static const class_ro_t *testRelativeRO;
+bool darling_test_relative_image_loaded;
 static const class_ro_t *relativeMetadataSourceForClass(Class cls)
 {
+    if (cls == testRelativeClass) return testRelativeRO;
     const class_ro_t *ro = cls->data()->ro();
     if (objc::inSharedCache((uintptr_t)ro)) return ro;
 
@@ -1740,6 +1744,44 @@ void darling_test_attach_method(Class cls, SEL name, IMP imp, bool invalidate)
                     return !c->cache.isConstantOptimizedCache();
                 });
                 changed = true;
+}
+
+extern "C" __attribute__((visibility("default")))
+unsigned darling_test_refresh_method(Class cls, SEL name, IMP imp)
+{
+    mutex_locker_t lock(runtimeLock);
+    auto list = (method_list_t *)calloc(method_list_t::byteSize(method_t::bigSize, 1), 1);
+    list->entsizeAndFlags = (uint32_t)sizeof(struct method_t::big) | fixed_up_method_list;
+    list->count = 1;
+    auto &first = list->begin()->big();
+    first.name = name;
+    first.types = "Q@:";
+    first.imp = imp;
+    auto table = (relative_list_list_t<method_list_t> *)calloc(1, 16);
+    table->entsize = 8;
+    table->count = 1;
+    intptr_t offset = (intptr_t)list - (intptr_t)&table->entries[0];
+    ASSERT(offset >= -(1LL<<47) && offset < (1LL<<47));
+    table->entries[0].raw = ((uint64_t)offset << 16) | 65535;
+    auto ro = (class_ro_t *)calloc(1, sizeof(class_ro_t));
+    memcpy(ro, cls->data()->ro(), sizeof(class_ro_t));
+    ro->baseMethodList = (void *)((uintptr_t)table | 1);
+    ro->baseProperties = nullptr;
+    ro->baseProtocols = nullptr;
+    testRelativeClass = cls;
+    testRelativeRO = ro;
+    darling_test_relative_image_loaded = false;
+    unsigned result = refreshRelativeMetadataListsForClass(cls) ? 1 : 0;
+    darling_test_relative_image_loaded = true;
+    if (refreshRelativeMetadataListsForClass(cls)) result |= 2;
+    if (refreshRelativeMetadataListsForClass(cls)) result |= 4;
+    testRelativeClass = Nil;
+    testRelativeRO = nullptr;
+    darling_test_relative_image_loaded = false;
+    free(ro);
+    free(table);
+    // The attached method list remains owned by the runtime.
+    return result;
 }
 
 void refreshRelativeMetadataListsFromFallback()
