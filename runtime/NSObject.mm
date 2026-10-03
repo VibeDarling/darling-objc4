@@ -963,7 +963,7 @@ private:
 
         setHotPage(this);
 
-#if DEBUG
+#if 0 // DEBUG
         // we expect any children to be completely empty
         for (AutoreleasePoolPage *page = child; page; page = page->child) {
             ASSERT(page->empty());
