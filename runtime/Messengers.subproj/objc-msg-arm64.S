@@ -582,6 +582,18 @@ LReturnZero:
 
 	END_ENTRY _objc_msgSend
 
+// The x86_64 and i386 messengers each define a real _objc_msgSend_stret, but arm64
+// has no separate entry point: the indirect return pointer arrives in x8 for both, so
+// the struct-returning call is the same code as any other. Darwin still exports the
+// name for compatibility, and arm64 apps do reference it -- Dictionary and Chess both
+// fail to launch with
+//     dyld: Symbol not found: _objc_msgSend_stret
+// because it is absent here. Alias it at link time rather than duplicating the
+// dispatcher, so there is one implementation and no second unwinder entry to keep in
+// sync.
+	.globl	_objc_msgSend_stret
+	.set	_objc_msgSend_stret, _objc_msgSend
+
 
 	ENTRY _objc_msgLookup
 	UNWIND _objc_msgLookup, NoFrame
