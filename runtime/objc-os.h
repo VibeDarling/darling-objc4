@@ -719,7 +719,10 @@ template <bool Debug> class mutex_tt;
 template <bool Debug> class monitor_tt;
 template <bool Debug> class recursive_mutex_tt;
 
-#if DEBUG
+// Darling builds without a build type, so DEBUG is on; lock debugging,
+// though, records every lock taken in a hash table, and the side table's
+// spinlock is taken by every retain and release. It is opt-in instead.
+#if DEBUG && defined(DARLING_OBJC_LOCKDEBUG)
 #   define LOCKDEBUG 1
 #else
 #   define LOCKDEBUG 0
