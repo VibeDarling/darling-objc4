@@ -120,4 +120,51 @@ target_link_options(objc-trampolines PRIVATE
 	-Wl,-not_for_dyld_shared_cache
 )
 
-install(TARGETS objc objc-trampolines DESTINATION libexec/darling/usr/lib)
+if (APPLE_ARCH_64BIT STREQUAL "arm64")
+	# An arm64e process runs the shared cache's libobjc, which signs the block pointers it hands to the
+	# trampolines (imp_implementationWithBlock) and dlopen()s this dylib. The arm64 trampolines branch to the
+	# signed invoke pointer without authenticating it (arm64-asm.h: br), so the call faults. The same source
+	# built with pointer authentication (TailCallBlockInvoke is braa) fixes it, so /usr/lib/libobjc-trampolines.dylib
+	# is a fat file: the arm64 slice is the library built above, unchanged, and an arm64e slice is added.
+	#
+	# The arm64e slice is compiled as arm64 with pointer authentication of calls switched on, not with
+	# -arch arm64e: clang stamps an arm64e object with a versioned-ABI subtype that the in-tree ld64 rejects, and the
+	# object has no data, so nothing else needs arm64e. ld64 links it as arm64e with -force_cpusubtype_ALL, which stamps the
+	# slice arm64e without a pointer authentication ABI version. Only -fptrauth-calls matters: the slice's one authenticated
+	# instruction is the braa in TailCallBlockInvoke.
+	add_library(objc-trampolines-arm64e-obj OBJECT objc-blocktramps-arm64.S)
+	set_property(TARGET objc-trampolines-arm64e-obj APPEND_STRING PROPERTY COMPILE_FLAGS
+		" -B ${CMAKE_BINARY_DIR}/src/external/cctools-port/cctools/misc/ -arch ${APPLE_ARCH_64BIT} -Xclang -fptrauth-calls")
+
+	set(OBJC_TRAMPOLINES_ARM64E "${CMAKE_CURRENT_BINARY_DIR}/libobjc-trampolines-arm64e.dylib")
+	set(OBJC_TRAMPOLINES_FAT "${CMAKE_CURRENT_BINARY_DIR}/libobjc-trampolines-fat.dylib")
+	set(LIPO "${CMAKE_BINARY_DIR}/src/external/cctools-port/cctools/misc/lipo")
+
+	add_custom_command(OUTPUT ${OBJC_TRAMPOLINES_ARM64E}
+		COMMAND ${CMAKE_C_COMPILER}
+			-target ${APPLE_TARGET_TRIPLET_64BIT} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}
+			-shared -nostdlib -arch arm64e
+			-fuse-ld=${CMAKE_BINARY_DIR}/src/external/cctools-port/cctools/ld64/src/${APPLE_TARGET_TRIPLET_64BIT}-ld
+			-B ${CMAKE_BINARY_DIR}/src/external/cctools-port/cctools/ld64/src/
+			-Wl,-dylib_install_name,${DYLIB_INSTALL_NAME}
+			-Wl,-compatibility_version,${DYLIB_COMPAT_VERSION}
+			-Wl,-current_version,${DYLIB_CURRENT_VERSION}
+			-Wl,-not_for_dyld_shared_cache
+			-Wl,-force_cpusubtype_ALL
+			$<TARGET_OBJECTS:objc-trampolines-arm64e-obj>
+			-o ${OBJC_TRAMPOLINES_ARM64E}
+		DEPENDS objc-trampolines-arm64e-obj ${APPLE_TARGET_TRIPLET_64BIT}-ld
+		COMMAND_EXPAND_LISTS
+		VERBATIM)
+
+	add_custom_command(OUTPUT ${OBJC_TRAMPOLINES_FAT}
+		COMMAND ${LIPO} -create $<TARGET_FILE:objc-trampolines> ${OBJC_TRAMPOLINES_ARM64E} -output ${OBJC_TRAMPOLINES_FAT}
+		DEPENDS objc-trampolines ${OBJC_TRAMPOLINES_ARM64E} lipo
+		VERBATIM)
+	add_custom_target(objc-trampolines-fat ALL DEPENDS ${OBJC_TRAMPOLINES_FAT})
+
+	install(TARGETS objc DESTINATION libexec/darling/usr/lib)
+	install(FILES ${OBJC_TRAMPOLINES_FAT} DESTINATION libexec/darling/usr/lib RENAME libobjc-trampolines.dylib)
+else ()
+	install(TARGETS objc objc-trampolines DESTINATION libexec/darling/usr/lib)
+endif ()
