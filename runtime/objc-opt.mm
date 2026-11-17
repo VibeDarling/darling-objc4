@@ -151,6 +151,7 @@ static bool preoptimized;
 extern const objc_opt_t _objc_opt_data;  // in __TEXT, __objc_opt_ro
 
 namespace objc_opt {
+// objc-shared-cache.h defines the rw table and only forward-declares this one.
 struct objc_headeropt_ro_t {
     uint32_t count;
     uint32_t entsize;
@@ -197,12 +198,6 @@ struct objc_headeropt_ro_t {
 
         return nil;
     }
-};
-
-struct objc_headeropt_rw_t {
-    uint32_t count;
-    uint32_t entsize;
-    header_info_rw headers[0];  // sorted by mhdr address
 };
 };
 
@@ -532,8 +527,11 @@ header_info_rw *getPreoptimizedHeaderRW(const struct header_info *const hdr)
                     hdr->fname(), hdr, hinfoRO, hinfoRW);
     }
     int32_t index = hinfoRO->index(hdr);
-    ASSERT(hinfoRW->entsize == sizeof(header_info_rw));
-    return &hinfoRW->headers[index];
+    // The cache strides entries by entsize (4 bytes in a 32-bit cache, 8 in a
+    // 64-bit one), so index with it instead of the element type's size.
+    ASSERT(hinfoRW->entsize >= sizeof(header_info_rw));
+    return reinterpret_cast<header_info_rw *>(
+        reinterpret_cast<uint8_t *>(hinfoRW->headers) + index * hinfoRW->entsize);
 }
 
 
