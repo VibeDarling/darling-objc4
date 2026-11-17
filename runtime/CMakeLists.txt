@@ -81,6 +81,9 @@ set(objc_SRCS
 	Messengers.subproj/objc-msg-x86_64.S
 )
 
+# dyld's objc-shared-cache.h (included when SUPPORT_PREOPT) uses std::optional.
+set_source_files_properties(objc-opt.mm PROPERTIES COMPILE_OPTIONS "-std=gnu++17")
+
 set(DYLIB_INSTALL_NAME "/usr/lib/libobjc.A.dylib")
 set(DYLIB_COMPAT_VERSION "1.0.0")
 set(DYLIB_CURRENT_VERSION "228.0.0")
